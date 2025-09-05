@@ -245,80 +245,125 @@ function updateSlotAggregate_(slotId, confirmedCount, filled){
     sh.getRange(rowIndex, idx.Status+1).setValue(filled ? 'filled' : 'open');
   }
 }
+
 function confirmIfCapacityReached_(slotId) {
-  var ss=getSS_(), slotSh=ss.getSheetByName(SHEETS.SLOTS), respSh=ss.getSheetByName(SHEETS.RESP);
-  var slots=readSheetAsObjects_(slotSh), slot=slots.find(function(s){ return s.SlotID===slotId; });
-  if (!slot) return { slotId:slotId, status:'notfound' };
-  var cap=parseInt(slot.Capacity,10);
+  const ss = getSS_();
+  const slotSh = ss.getSheetByName(SHEETS.SLOTS);
+  const respSh = ss.getSheetByName(SHEETS.RESP);
 
-  if (!canConfirmMore_()) return { slotId:slotId, filled:false, reason:'totalConfirmCap reached' };
+  const slots = readSheetAsObjects_(slotSh);
+  const slot = slots.find(s => s.SlotID === slotId);
+  if (!slot) return { slotId, status: 'notfound' };
 
-  var all = getResponses_().filter(function(r){ return r.SlotID===slotId; })
-    .sort(function(a,b){ return new Date(a.Timestamp)-new Date(b.Timestamp); });
+  const cap = parseInt(slot.Capacity, 10);
 
-  var confirmedAny=getResponses_().filter(function(r){ return r.Status==='confirmed'; });
-  var confirmedEmails=new Set(confirmedAny.map(function(r){ return String(r.Email).toLowerCase(); }));
+  // このスロットの全申込（先着順）
+  let all = getResponses_().filter(r => r.SlotID === slotId);
+  all.sort((a, b) => new Date(a.Timestamp).getTime() - new Date(b.Timestamp).getTime());
 
-  var winners=[], seen=new Set();
-  for (var i=0;i<all.length && winners.length<cap;i++){
-    var r=all[i], em=String(r.Email).toLowerCase();
-    if (seen.has(em)) continue;
-    if (!CONFIG.allowMultipleConfirmationPerEmail && confirmedEmails.has(em)) continue;
-    winners.push(r); seen.add(em);
+  // 既に他スロットで確定済みのメール（1人1枠ポリシー用）
+  const allConfirmed = getResponses_().filter(r => r.Status === 'confirmed');
+  const confirmedEmails = new Set(allConfirmed.map(r => String(r.Email).toLowerCase()));
+
+  // このスロット内の同一メールの連投は1席に
+  const seenEmailsInThisSlot = new Set();
+
+  // 先着 cap 名の候補
+  const winners = [];
+  for (const r of all) {
+    if (winners.length >= cap) break;
+    const email = String(r.Email).toLowerCase();
+    if (seenEmailsInThisSlot.has(email)) continue;
+    if (!CONFIG.allowMultipleConfirmationPerEmail && confirmedEmails.has(email)) continue;
+    winners.push(r);
+    seenEmailsInThisSlot.add(email);
   }
 
-  var ready = all.length >= cap;
-  if (CONFIG.requireFullCapacityToConfirm && !ready) {
-    var data=respSh.getDataRange().getValues(), head=data.shift(), idx=colIndex_(head);
-    data.forEach(function(row,i){
-      var obj=asObj_(head,row);
-      if (obj.SlotID!==slotId) return;
-      if (obj.Status==='confirmed'){ row[idx.Status]='pending'; row[idx.NotifiedConfirm]=false; respSh.getRange(i+2,1,1,row.length).setValues([row]); }
+  const readyToConfirm = all.length >= cap; // 定員に達したか？
+
+  const respValues = respSh.getDataRange().getValues();
+  const head = respValues.shift();
+  const idx = colIndex_(head);
+
+  const keyOf = (x) => `${String(x.Email).toLowerCase()}|${new Date(x.Timestamp).getTime()}`;
+  const winnerKeys = new Set(winners.map(keyOf));
+
+  const newlyConfirmed = [];
+
+  // 1) 定員未満なら「全員 pending」に揃え直して終了
+  if (CONFIG.requireFullCapacityToConfirm && !readyToConfirm) {
+    respValues.forEach((row, i) => {
+      const obj = asObj_(head, row);
+      if (obj.SlotID !== slotId) return;
+      if (obj.Status !== 'pending') {
+        row[idx.Status] = 'pending';
+        row[idx.NotifiedConfirm] = false; // 念のため
+        respSh.getRange(i + 2, 1, 1, row.length).setValues([row]);
+      }
     });
-    updateSlotAggregate_(slotId,0,false);
-    return { slotId:slotId, filled:false, confirmedCount:0, newlyConfirmed:[] };
+    // スロット集計もリセット
+    const slotRow = slots.findIndex(s => s.SlotID === slotId);
+    slotSh.getRange(slotRow + 2, SLOT_HEADERS.indexOf('ConfirmedCount') + 1).setValue(0);
+    slotSh.getRange(slotRow + 2, SLOT_HEADERS.indexOf('Status') + 1).setValue('open');
+    return { slotId, filled: false, confirmedCount: 0, newlyConfirmed: [] };
   }
 
-  var respValues=respSh.getDataRange().getValues(), head=respValues.shift(), idx=colIndex_(head);
-  var keyOf=function(x){ return String(x.Email).toLowerCase()+'|'+(new Date(x.Timestamp).getTime()); };
-  var keys=new Set(winners.map(keyOf));
-  var newly=[];
-  respValues.forEach(function(row,i){
-    var obj=asObj_(head,row);
-    if (obj.SlotID!==slotId) return;
-    var isWin = keys.has(keyOf(obj));
-    if (isWin) {
-      if (obj.Status!=='confirmed') {
-        row[idx.Status]='confirmed'; row[idx.NotifiedWait]=false;
-        newly.push({
-          rowIndex:i+2,
-          timestamp: obj.Timestamp,  // ← キーに使う
-          slotId: obj.SlotID,        // ← キーに使う
+  // 2) 定員達成：勝者は confirmed、非勝者は必ず waitlist（←★ここを強制降格に修正）
+  respValues.forEach((row, i) => {
+    const obj = asObj_(head, row);
+    if (obj.SlotID !== slotId) return;
+
+    const rowKey = keyOf(obj);
+    const isWinner = winnerKeys.has(rowKey);
+
+    if (isWinner) {
+      if (obj.Status !== 'confirmed') {
+        row[idx.Status] = 'confirmed';
+        row[idx.NotifiedWait] = false;
+        newlyConfirmed.push({
+          rowIndex: i + 2,
           name: obj.Name, email: obj.Email,
           date: obj.Date, start: obj.Start, end: obj.End
         });
       }
     } else {
-      if (obj.Status!=='confirmed' && obj.Status!=='waitlist') row[idx.Status]='waitlist';
+      // ← ここがポイント：すでに confirmed でも waitlist に降格
+      if (obj.Status !== 'waitlist') {
+        row[idx.Status] = 'waitlist';
+      }
     }
-    respSh.getRange(i+2,1,1,row.length).setValues([row]);
+    respSh.getRange(i + 2, 1, 1, row.length).setValues([row]);
   });
 
-  var confirmedNow = getResponses_().filter(function(r){ return r.SlotID===slotId && r.Status==='confirmed'; }).length;
-  updateSlotAggregate_(slotId, confirmedNow, confirmedNow>=cap);
+  // confirmed人数を再集計
+  const confirmedNowCount = getResponses_().filter(r => r.SlotID === slotId && r.Status === 'confirmed').length;
 
-  newly.forEach(function(nc){
+  // スロット側の集計
+  const slotRowIdx = slots.findIndex(s => s.SlotID === slotId);
+  slotSh.getRange(slotRowIdx + 2, SLOT_HEADERS.indexOf('ConfirmedCount') + 1).setValue(confirmedNowCount);
+  slotSh.getRange(slotRowIdx + 2, SLOT_HEADERS.indexOf('Status') + 1).setValue(confirmedNowCount >= cap ? 'filled' : 'open');
+
+  // 参加者宛の確定メール
+  newlyConfirmed.forEach(nc => {
     sendConfirmMail_(nc.name, nc.email, nc.date, nc.start, nc.end, slot.Location, slot.Timezone);
-    // 行番号ではなくキー検索で確実にフラグ
-    markNotifiedByFind_({ Timestamp:nc.timestamp, Email:nc.email, SlotID:nc.slotId }, 'NotifiedConfirm', true);
-    archiveOtherChoicesForEmail_(String(nc.email).toLowerCase(), slotId);
+    markNotified_(nc.rowIndex, 'NotifiedConfirm', true);
   });
 
-  var up = upsertConfirmedRow_(slot, winners.slice(0,cap));
-  if (up.created) sendAdminConfirmMail_(slot, winners.slice(0,cap));
+  // Confirmedシートの upsert（常に先着 cap 名を書き戻す）
+  const winnersLimited = winners.slice(0, cap);
+  const upsert = upsertConfirmedRow_(slot, winnersLimited);
+  if (upsert.created) {
+    sendAdminConfirmMail_(slot, winnersLimited);
+  }
 
-  return { slotId:slotId, filled:(confirmedNow>=cap), confirmedCount:confirmedNow, newlyConfirmed:newly.map(function(n){ return n.email; }) };
+  return {
+    slotId,
+    filled: confirmedNowCount >= cap,
+    confirmedCount: confirmedNowCount,
+    newlyConfirmed: newlyConfirmed.map(n => n.email)
+  };
 }
+
 
 /** ========= アーカイブ ========= */
 function archiveOtherChoicesForEmail_(emailLower, keepSlotId){
@@ -430,21 +475,40 @@ function processMailQueue_(){
 function scheduleQueueFlush_(minutes){ ScriptApp.newTrigger('processMailQueue_').timeBased().after(minutes*60*1000).create(); }
 
 /** ========= Confirmed 反映 ========= */
-function upsertConfirmedRow_(slot, winners){
-  var sh=ensureConfirmedSheet_(); var values=sh.getDataRange().getValues(); var head=values.shift(); var idx=colIndex_(head);
-  var now=new Date(); var s1=winners[0]||{}, s2=winners[1]||{};
-  var ds=normDateStr_(slot.Date), st=normTimeStr_(slot.Start), en=normTimeStr_(slot.End);
-  for (var i=0;i<values.length;i++){
-    var row=values[i];
-    if (row[idx.SlotID]===slot.SlotID){
-      row[idx.Date]=ds; row[idx.Start]=st; row[idx.End]=en; row[idx.Location]=slot.Location; row[idx.ConfirmedAt]=now;
-      row[idx.Subject1Name]=s1.Name||''; row[idx.Subject1Email]=s1.Email||''; row[idx.Subject2Name]=s2.Name||''; row[idx.Subject2Email]=s2.Email||'';
-      sh.getRange(i+2,1,1,row.length).setValues([row]); return {created:false, rowIndex:i+2};
+function upsertConfirmedRow_(slot, winners) {
+  const sh = ensureConfirmedSheet_();
+  const values = sh.getDataRange().getValues();
+  const head = values.shift();
+  const idx = colIndex_(head);
+
+  // winners[0], winners[1] を列化（不足分は空欄）
+  const s1 = winners[0] || {};
+  const s2 = winners[1] || {};
+  const now = new Date();
+
+  const rowData = [
+    slot.SlotID,
+    normDateStr_(slot.Date),
+    normTimeStr_(slot.Start),
+    normTimeStr_(slot.End),
+    slot.Location,
+    now,
+    s1.Name || '', s1.Email || '',
+    s2.Name || '', s2.Email || '',
+  ];
+
+  // 既に該当SlotIDがあるなら更新、無ければ追記
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    if (row[idx.SlotID] === slot.SlotID) {
+      sh.getRange(i + 2, 1, 1, rowData.length).setValues([rowData]);
+      return { created: false, rowIndex: i + 2 };
     }
   }
-  sh.appendRow([slot.SlotID, ds, st, en, slot.Location, now, s1.Name||'', s1.Email||'', s2.Name||'', s2.Email||'']);
-  return {created:true, rowIndex: sh.getLastRow()};
+  sh.appendRow(rowData);
+  return { created: true, rowIndex: sh.getLastRow() };
 }
+
 
 /** ========= AddSlots / CancelOps ========= */
 function applyAddSlots(){
@@ -605,13 +669,36 @@ function setResponseStatus_(rec, status){
 
 /** ========= トリガー＆UI ========= */
 function setupTriggers() {
-  const targets = new Set(['sendReminders','sendDailyAdminDigest','processMailQueue_']);
-  ScriptApp.getProjectTriggers().forEach(function(t){ if (targets.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t); });
+  // 既存の同名トリガは掃除
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const fn = t.getHandlerFunction();
+    if (['sendReminders','sendDailyAdminDigest','processMailQueue_','onOpenUi_'].includes(fn)) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
 
-  ScriptApp.newTrigger('sendReminders').timeBased().atHour(9).everyDays(1).create();
-  ScriptApp.newTrigger('sendDailyAdminDigest').timeBased().atHour(0).everyDays(1).create();
-  ScriptApp.newTrigger('processMailQueue_').timeBased().everyHours(1).nearMinute((CONFIG.mail && CONFIG.mail.hourlyQueueTriggerMinute)||10).create();
+  // 前日9:00に参加者へ
+  ScriptApp.newTrigger('sendReminders')
+    .timeBased().atHour(9).nearMinute(0).everyDays(1).create();
+
+  // 毎日0:00に管理者へダイジェスト
+  ScriptApp.newTrigger('sendDailyAdminDigest')
+    .timeBased().atHour(0).nearMinute(0).everyDays(1).create();
+
+  // 毎時（xx:10）にメールキュー
+  const min = (CONFIG.mail && CONFIG.mail.hourlyQueueTriggerMinute) || 10;
+  ScriptApp.newTrigger('processMailQueue_')
+    .timeBased().everyHours(1).nearMinute(min).create();
+
+  // ここがポイント：インストール型 onOpen（スタンドアロンでもメニューが出る）
+  if (typeof SS_ID === 'string' && SS_ID) {
+    ScriptApp.newTrigger('onOpenUi_')
+      .forSpreadsheet(SS_ID)
+      .onOpen()
+      .create();
+  }
 }
+
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('スケジューラ')
@@ -623,6 +710,27 @@ function onOpen() {
     .addItem('トリガー設定（setupTriggers）', 'setupTriggers')
     .addToUi();
 }
+
+function addSchedulerMenu_() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('スケジューラ')
+    .addItem('操作パネルを開く', 'openControlPanel')
+    .addSeparator()
+    .addItem('setup（枠生成）', 'setup')
+    .addItem('setupTriggers（トリガー作成）', 'setupTriggers')
+    .addToUi();
+}
+
+// コンテナバインド時に効く
+function onOpen() {
+  addSchedulerMenu_();
+}
+
+// スタンドアロンでも効く（インストール型トリガが呼ぶ）
+function onOpenUi_() {
+  addSchedulerMenu_();
+}
+
 function openControlPanel(){
   var html = HtmlService.createHtmlOutput(
     '<div style="font-family:system-ui; padding:12px; width:280px;">' +
