@@ -1160,6 +1160,15 @@ function addSchedulerMenu_() {
 
 function onOpen() {
   addSchedulerMenu_();
+  
+  // Test.gsが存在する場合はテストメニューも追加
+  try {
+    if (typeof addTestMenu === 'function') {
+      addTestMenu();
+    }
+  } catch(e) {
+    // Test.gsが存在しない場合は無視
+  }
 }
 
 function onOpenUi_() {
