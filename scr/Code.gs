@@ -1314,3 +1314,4 @@ function hasConfirmedElsewhere_(email, excludeSlotId) {
     r.SlotID !== excludeSlotId
   );
   return confirmed.length > 0;
+}
