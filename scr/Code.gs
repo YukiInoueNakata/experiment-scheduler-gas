@@ -16,11 +16,29 @@ const SHEETS = {
   CO: 'CancelOps',
   MQ: 'MailQueue'
 };
-const SLOT_HEADERS = ['SlotID','Date','Start','End','Capacity','Location','Status','ConfirmedCount','Timezone'];
-const RESP_HEADERS = ['Timestamp','Name','Email','SlotID','Date','Start','End','Status','NotifiedConfirm','NotifiedWait','NotifiedRemind','Notes'];
-const CONF_HEADERS = ['SlotID','Date','Start','End','Location','ConfirmedAt','Subject1Name','Subject1Email','Subject2Name','Subject2Email'];
-const ARCH_HEADERS = ['ArchivedAt','Timestamp','Name','Email','SlotID','Date','Start','End','Status','Notes'];
-const MQ_HEADERS   = ['CreatedAt','Type','To','Subject','Body','ICSText','MetaJson','Status','LastTriedAt','Error'];
+
+function getSlotHeaders() {
+  return ['SlotID','Date','Start','End','Capacity','Location','Status','ConfirmedCount','Timezone'];
+}
+
+function getResponseHeaders() {
+  return ['Timestamp','Name','Email','SlotID','Date','Start','End','Status','NotifiedConfirm','NotifiedWait','NotifiedRemind','Notes'];
+}
+
+function getConfirmedHeaders() {
+  const base = ['SlotID','Date','Start','End','Location','ConfirmedAt'];
+  for (let i = 1; i <= CONFIG.capacity; i++) {
+    base.push(`Subject${i}Name`, `Subject${i}Email`);
+  }
+  base.push('ActualCount');
+  return base;
+}
+
+function getArchiveHeaders() {
+  return ['ArchivedAt','Timestamp','Name','Email','SlotID','Date','Start','End','Status','Notes','NotifiedConfirm','NotifiedWait','NotifiedRemind','RestoredAt'];
+}
+
+const MQ_HEADERS = ['CreatedAt','Type','To','Subject','Body','ICSText','MetaJson','Status','LastTriedAt','Error'];
 
 /** ========= 正規化（NaN対策） ========= */
 function normDateStr_(v, zone) {
@@ -34,6 +52,7 @@ function normDateStr_(v, zone) {
   if (!isNaN(d)) return Utilities.formatDate(d, tz, 'yyyy-MM-dd');
   throw new Error('Invalid date: ' + s);
 }
+
 function normTimeStr_(v, zone) {
   var tz = zone || CONFIG.tz || 'Asia/Tokyo';
   if (v instanceof Date) return Utilities.formatDate(v, tz, 'HH:mm');
@@ -48,8 +67,14 @@ function normTimeStr_(v, zone) {
 /** ========= 初期化＆各シート ========= */
 function ensureSheets_() {
   var ss = getSS_();
-  if (!ss.getSheetByName(SHEETS.SLOTS)) ss.insertSheet(SHEETS.SLOTS).appendRow(SLOT_HEADERS);
-  if (!ss.getSheetByName(SHEETS.RESP))  ss.insertSheet(SHEETS.RESP).appendRow(RESP_HEADERS);
+  if (!ss.getSheetByName(SHEETS.SLOTS)) {
+    const sh = ss.insertSheet(SHEETS.SLOTS);
+    sh.appendRow(getSlotHeaders());
+  }
+  if (!ss.getSheetByName(SHEETS.RESP)) {
+    const sh = ss.insertSheet(SHEETS.RESP);
+    sh.appendRow(getResponseHeaders());
+  }
   ensureConfirmedSheet_();
   ensureArchiveSheet_();
   ensureMailQueueSheet_();
@@ -57,6 +82,7 @@ function ensureSheets_() {
   ensureCancelOpsSheet_();
   removeDefaultSheet_();
 }
+
 function removeDefaultSheet_(){
   var ss = getSS_();
   ['シート1','Sheet1'].forEach(function(n){
@@ -64,23 +90,40 @@ function removeDefaultSheet_(){
     if (sh && ss.getSheets().length > 1) ss.deleteSheet(sh);
   });
 }
+
 function ensureConfirmedSheet_(){
-  var ss = getSS_(); var sh = ss.getSheetByName(SHEETS.CONF);
-  if (!sh) { sh = ss.insertSheet(SHEETS.CONF); sh.appendRow(CONF_HEADERS); }
+  var ss = getSS_(); 
+  var sh = ss.getSheetByName(SHEETS.CONF);
+  if (!sh) { 
+    sh = ss.insertSheet(SHEETS.CONF); 
+    sh.appendRow(getConfirmedHeaders()); 
+  }
   return sh;
 }
+
 function ensureArchiveSheet_(){
-  var ss = getSS_(); var sh = ss.getSheetByName(SHEETS.ARCH);
-  if (!sh) { sh = ss.insertSheet(SHEETS.ARCH); sh.appendRow(ARCH_HEADERS); }
+  var ss = getSS_(); 
+  var sh = ss.getSheetByName(SHEETS.ARCH);
+  if (!sh) { 
+    sh = ss.insertSheet(SHEETS.ARCH); 
+    sh.appendRow(getArchiveHeaders()); 
+  }
   return sh;
 }
+
 function ensureMailQueueSheet_(){
-  var ss = getSS_(); var sh = ss.getSheetByName(SHEETS.MQ);
-  if (!sh) { sh = ss.insertSheet(SHEETS.MQ); sh.appendRow(MQ_HEADERS); }
+  var ss = getSS_(); 
+  var sh = ss.getSheetByName(SHEETS.MQ);
+  if (!sh) { 
+    sh = ss.insertSheet(SHEETS.MQ); 
+    sh.appendRow(MQ_HEADERS); 
+  }
   return sh;
 }
+
 function ensureAddSlotsSheet_(){
-  var ss = getSS_(); var sh = ss.getSheetByName(SHEETS.AS);
+  var ss = getSS_(); 
+  var sh = ss.getSheetByName(SHEETS.AS);
   if (!sh) {
     sh = ss.insertSheet(SHEETS.AS);
     sh.appendRow(['Mode','Date','Start','End','FromDate','ToDate','TimeWindows','ExcludeWeekends','Capacity','Location','Timezone','RespectConfigExcludes','Status','Result']);
@@ -95,18 +138,22 @@ function ensureAddSlotsSheet_(){
   }
   return sh;
 }
+
 function ensureCancelOpsSheet_(){
-  var ss = getSS_(); var sh = ss.getSheetByName(SHEETS.CO);
+  var ss = getSS_(); 
+  var sh = ss.getSheetByName(SHEETS.CO);
   if (!sh) {
     sh = ss.insertSheet(SHEETS.CO);
-    sh.appendRow(['Email','Scope','SlotPolicy','Reason','Status','Result']);
-    sh.appendRow(['user@example.com','confirmed','refill-slot','本人都合','example','← この行は見本です']);
+    sh.appendRow(['Email','Scope','SlotPolicy','FillPolicy','Reason','Status','Result']);
+    sh.appendRow(['user@example.com','confirmed','refill-slot','try-fill','本人都合','example','← この行は見本です']);
     sh.setFrozenRows(1);
     var ruleScope = SpreadsheetApp.newDataValidation().requireValueInList(['confirmed','all'], true).setAllowInvalid(false).build();
     sh.getRange('B2:B1000').setDataValidation(ruleScope);
     var rulePolicy = SpreadsheetApp.newDataValidation().requireValueInList(['drop-slot','refill-slot'], true).setAllowInvalid(false).build();
     sh.getRange('C2:C1000').setDataValidation(rulePolicy);
-    sh.setColumnWidths(1, 6, 160);
+    var ruleFill = SpreadsheetApp.newDataValidation().requireValueInList(['try-fill','keep-partial','to-pending','cancel-all'], true).setAllowInvalid(false).build();
+    sh.getRange('D2:D1000').setDataValidation(ruleFill);
+    sh.setColumnWidths(1, 7, 160);
   }
   return sh;
 }
@@ -115,35 +162,43 @@ function ensureCancelOpsSheet_(){
 function setup() {
   ensureSheets_();
   generateSlotsFromConfig_();
-  setupTriggers(); // トリガーも同時作成
+  setupTriggers();
 }
+
 function clearSlots_(){
   var sh = getSS_().getSheetByName(SHEETS.SLOTS);
-  sh.clear(); sh.appendRow(SLOT_HEADERS);
+  sh.clear(); 
+  sh.appendRow(getSlotHeaders());
 }
+
 function generateSlotsFromConfig_(){
   clearSlots_();
   var sh = getSS_().getSheetByName(SHEETS.SLOTS);
   var start = new Date(CONFIG.startDate+'T00:00:00'), end = new Date(CONFIG.endDate+'T00:00:00');
   var isExcludedDate = function(s){ return (CONFIG.excludeDates||[]).indexOf(s)>=0; };
-  var isExcludedDT   = function(d,st,en){ return (CONFIG.excludeDateTimes||[]).indexOf(d+' '+st+'-'+en)>=0; };
+  var isExcludedDT = function(d,st,en){ return (CONFIG.excludeDateTimes||[]).indexOf(d+' '+st+'-'+en)>=0; };
+  
   for (var d=new Date(start); d<=end; d=new Date(d.getTime()+86400000)){
     if (CONFIG.excludeWeekends && (d.getDay()===0 || d.getDay()===6)) continue;
     var y=d.getFullYear(), m=('0'+(d.getMonth()+1)).slice(-2), da=('0'+d.getDate()).slice(-2);
     var dateStr = y+'-'+m+'-'+da;
     if (isExcludedDate(dateStr)) continue;
     CONFIG.timeWindows.forEach(function(win){
-      var p=win.split('-'); var st=p[0], en=p[1];
+      var p=win.split('-'); 
+      var st=p[0], en=p[1];
       if (isExcludedDT(dateStr, st, en)) return;
       createSlotRowIfNotExists_(dateStr, st, en, CONFIG.capacity, CONFIG.location, CONFIG.tz);
     });
   }
 }
+
 function createSlotRowIfNotExists_(dateStr, st, en, cap, loc, tz){
   var sh = getSS_().getSheetByName(SHEETS.SLOTS);
   var id = dateStr + '_' + st.replace(':','');
   var vals = sh.getDataRange().getValues();
-  for (var i=1;i<vals.length;i++){ if (vals[i][0]===id) return false; }
+  for (var i=1;i<vals.length;i++){ 
+    if (vals[i][0]===id) return false; 
+  }
   sh.appendRow([id, dateStr, st, en, cap, loc, 'open', 0, tz]);
   return true;
 }
@@ -156,11 +211,15 @@ function doGet() {
   t.capacity = CONFIG.capacity;
   return t.evaluate().setTitle(CONFIG.title);
 }
-function include(filename){ return HtmlService.createHtmlOutputFromFile(filename).getContent(); }
+
+function include(filename){ 
+  return HtmlService.createHtmlOutputFromFile(filename).getContent(); 
+}
 
 function getSlots() {
   var sh = getSS_().getSheetByName(SHEETS.SLOTS);
-  var values = sh.getDataRange().getValues(); var head = values.shift();
+  var values = sh.getDataRange().getValues(); 
+  var head = values.shift();
   var resp = getResponses_(), bySlot = groupBy_(resp, function(r){ return r.SlotID; });
 
   var tomorrowStr = null;
@@ -169,30 +228,50 @@ function getSlots() {
     var y=t.getFullYear(), m=('0'+(t.getMonth()+1)).slice(-2), d=('0'+t.getDate()).slice(-2);
     tomorrowStr = y+'-'+m+'-'+d;
   }
+  
   var out = values.map(function(row){
     var rec = asObj_(head,row);
     var ds = normDateStr_(rec.Date), st=normTimeStr_(rec.Start), en=normTimeStr_(rec.End);
     var confirmed = (bySlot[rec.SlotID]||[]).filter(function(r){ return r.Status==='confirmed'; }).length;
-    var label = (function(){ var w='日月火水木金土'[ new Date(ds+'T00:00:00+09:00').getDay() ]; return ds+' ('+w+')'; })();
-    return { slotId:rec.SlotID, date:ds, dateLabel:label, start:st, end:en, capacity:Number(rec.Capacity),
-             status:rec.Status, remaining:Math.max(0, Number(rec.Capacity)-confirmed), tz:rec.Timezone };
-  }).filter(function(s){ return !tomorrowStr || s.date >= tomorrowStr; })
-    .sort(function(a,b){ return (a.date+a.start).localeCompare(b.date+b.start); });
+    var label = (function(){ 
+      var w='日月火水木金土'[ new Date(ds+'T00:00:00+09:00').getDay() ]; 
+      return ds+' ('+w+')'; 
+    })();
+    return { 
+      slotId:rec.SlotID, 
+      date:ds, 
+      dateLabel:label, 
+      start:st, 
+      end:en, 
+      capacity:Number(rec.Capacity),
+      status:rec.Status, 
+      remaining:Math.max(0, Number(rec.Capacity)-confirmed), 
+      tz:rec.Timezone 
+    };
+  }).filter(function(s){ 
+    return !tomorrowStr || s.date >= tomorrowStr; 
+  }).sort(function(a,b){ 
+    return (a.date+a.start).localeCompare(b.date+b.start); 
+  });
 
   return { title: CONFIG.title, slots: out, capacity: CONFIG.capacity };
 }
 
-/** ========= 申込処理 ========= */
+/** ========= 申込処理（改修版） ========= */
 function register(name, email, slotIds) {
   if (!name || !email || !slotIds || !slotIds.length) throw new Error('入力が不足しています。');
   email = String(email).trim().toLowerCase();
 
-  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  var lock = LockService.getScriptLock(); 
+  lock.waitLock(30000);
+  
   try {
     var now=new Date(), ss=getSS_(), respSh=ss.getSheetByName(SHEETS.RESP), slotSh=ss.getSheetByName(SHEETS.SLOTS);
     var slotsAll = readSheetAsObjects_(slotSh);
 
-    var existing = getResponses_().filter(function(r){ return String(r.Email).toLowerCase()===email; });
+    var existing = getResponses_().filter(function(r){ 
+      return String(r.Email).toLowerCase()===email; 
+    });
     var already = new Set(existing.map(function(r){ return r.SlotID; }));
 
     var created=[];
@@ -201,10 +280,10 @@ function register(name, email, slotIds) {
       var slot = slotsAll.find(function(s){ return s.SlotID===id; });
       if (!slot) return;
       respSh.appendRow([now, name, email, id, slot.Date, slot.Start, slot.End, 'pending', false, false, false, '']);
-      created.push({date:slot.Date, start:slot.Start, end:slot.End});
+      created.push({slotId:id, date:slot.Date, start:slot.Start, end:slot.End});
     });
 
-    // 先に受付メール（確実に先に届く）
+    // 受付メール送信
     if (created.length){
       var lines = created.map(function(s){
         var ds=normDateStr_(s.date), st=normTimeStr_(s.start), en=normTimeStr_(s.end);
@@ -215,37 +294,123 @@ function register(name, email, slotIds) {
       MailApp.sendEmail(email, subject, body, {name:CONFIG.mailFromName});
     }
 
-    // 影響スロットの確定処理
-    var results=[];
-    created.forEach(function(c){
-      var slotId = normDateStr_(c.date)+'_'+normTimeStr_(c.start).replace(':','');
-      results.push(confirmIfCapacityReached_(slotId));
-    });
+    // 30秒後にバッチ処理をスケジュール
+    scheduleDelayedBatch_(CONFIG.batchProcessDelaySeconds || 30);
 
-    // 確定メールは遅延（受付より後に届く）
-    scheduleQueueFlush_(2);
-
-    return { ok:true, message:'受付しました。確定の可否はメールでお知らせします。', results:results };
-  } finally { lock.releaseLock(); }
-}
-
-/** ========= 確定処理 ========= */
-function canConfirmMore_(){
-  var conf = ensureConfirmedSheet_();
-  var rows = conf.getLastRow()-1;
-  if (rows <= 0) return true;
-  var currentPeople = rows * CONFIG.capacity;
-  return currentPeople < CONFIG.totalConfirmCap;
-}
-function updateSlotAggregate_(slotId, confirmedCount, filled){
-  var sh=getSS_().getSheetByName(SHEETS.SLOTS), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head), rowIndex=-1;
-  for (var i=0;i<vals.length;i++){ if (vals[i][idx.SlotID]===slotId){ rowIndex=i+2; break; } }
-  if (rowIndex>0){
-    sh.getRange(rowIndex, idx.ConfirmedCount+1).setValue(confirmedCount);
-    sh.getRange(rowIndex, idx.Status+1).setValue(filled ? 'filled' : 'open');
+    return { 
+      ok:true, 
+      message:'受付しました。確定の可否はメールでお知らせします。', 
+      created:created.length 
+    };
+    
+  } finally { 
+    lock.releaseLock(); 
   }
 }
 
+/** ========= バッチ処理（新規追加） ========= */
+function scheduleDelayedBatch_(seconds) {
+  ScriptApp.newTrigger('processPendingBatch_')
+    .timeBased()
+    .after(seconds * 1000)
+    .create();
+}
+
+function processPendingBatch_() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  
+  try {
+    // 1. 過剰登録のクリーンアップ
+    cleanupOverflowedPending_();
+    
+    // 2. 空き枠への追加登録
+    fillRemainingSlots_();
+    
+    // 3. pendingのスロットごとの処理
+    processAllPendingSlots_();
+    
+    // 4. 確定者の他選択肢をArchive
+    archiveConfirmedAlternatives_();
+    
+    // 5. メール送信
+    processMailQueue_();
+    
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cleanupOverflowedPending_() {
+  const conf = readSheetAsObjects_(ensureConfirmedSheet_());
+  const slots = readSheetAsObjects_(getSS_().getSheetByName(SHEETS.SLOTS));
+  
+  slots.forEach(slot => {
+    const slotId = slot.SlotID;
+    const capacity = Number(slot.Capacity);
+    const confirmed = conf.find(c => c.SlotID === slotId);
+    const actualCount = confirmed ? Number(confirmed.ActualCount || 0) : 0;
+    
+    if (actualCount >= capacity) {
+      // 満員のスロットのpending/waitlistをArchive
+      const responses = getResponses_().filter(r => 
+        r.SlotID === slotId && 
+        (r.Status === 'pending' || r.Status === 'waitlist')
+      );
+      
+      responses.forEach(r => {
+        moveToArchive_(r, 'slot-already-full');
+        deleteResponseRow_(r);
+      });
+    }
+  });
+}
+
+function fillRemainingSlots_() {
+  const conf = readSheetAsObjects_(ensureConfirmedSheet_());
+  const slots = readSheetAsObjects_(getSS_().getSheetByName(SHEETS.SLOTS));
+  
+  conf.forEach(confirmed => {
+    const actualCount = Number(confirmed.ActualCount || 0);
+    const slot = slots.find(s => s.SlotID === confirmed.SlotID);
+    if (!slot) return;
+    
+    const capacity = Number(slot.Capacity);
+    const availableSeats = capacity - actualCount;
+    
+    if (availableSeats > 0 && actualCount >= CONFIG.minCapacityToConfirm) {
+      // 空き枠があり、最小人数を満たしている
+      const candidates = getResponses_()
+        .filter(r => r.SlotID === confirmed.SlotID && 
+                    (r.Status === 'pending' || r.Status === 'waitlist'))
+        .sort((a,b) => new Date(a.Timestamp) - new Date(b.Timestamp));
+      
+      const toAdd = candidates.slice(0, availableSeats).filter(c => 
+        !hasConfirmedElsewhere_(c.Email, confirmed.SlotID)
+      );
+      
+      toAdd.forEach(c => {
+        setResponseStatus_(c, 'confirmed');
+        sendConfirmMail_(c.Name, c.Email, c.Date, c.Start, c.End, slot.Location, slot.Timezone);
+      });
+      
+      if (toAdd.length > 0) {
+        updateConfirmedSheet_(confirmed.SlotID);
+      }
+    }
+  });
+}
+
+function processAllPendingSlots_() {
+  const pendingResponses = getResponses_().filter(r => r.Status === 'pending');
+  const bySlot = groupBy_(pendingResponses, r => r.SlotID);
+  
+  Object.keys(bySlot).forEach(slotId => {
+    confirmIfCapacityReached_(slotId);
+  });
+}
+
+/** ========= 確定処理（改修版） ========= */
 function confirmIfCapacityReached_(slotId) {
   const ss = getSS_();
   const slotSh = ss.getSheetByName(SHEETS.SLOTS);
@@ -256,65 +421,62 @@ function confirmIfCapacityReached_(slotId) {
   if (!slot) return { slotId, status: 'notfound' };
 
   const cap = parseInt(slot.Capacity, 10);
+  const minCap = CONFIG.minCapacityToConfirm;
 
   // このスロットの全申込（先着順）
   let all = getResponses_().filter(r => r.SlotID === slotId);
   all.sort((a, b) => new Date(a.Timestamp).getTime() - new Date(b.Timestamp).getTime());
 
-  // 既に他スロットで確定済みのメール（1人1枠ポリシー用）
+  // 既に他スロットで確定済みのメール
   const allConfirmed = getResponses_().filter(r => r.Status === 'confirmed');
   const confirmedEmails = new Set(allConfirmed.map(r => String(r.Email).toLowerCase()));
 
-  // このスロット内の同一メールの連投は1席に
+  // このスロット内の重複を排除
   const seenEmailsInThisSlot = new Set();
-
-  // 先着 cap 名の候補
-  const winners = [];
+  const candidates = [];
+  
   for (const r of all) {
-    if (winners.length >= cap) break;
+    if (candidates.length >= cap) break;
     const email = String(r.Email).toLowerCase();
     if (seenEmailsInThisSlot.has(email)) continue;
     if (!CONFIG.allowMultipleConfirmationPerEmail && confirmedEmails.has(email)) continue;
-    winners.push(r);
+    candidates.push(r);
     seenEmailsInThisSlot.add(email);
   }
 
-  const readyToConfirm = all.length >= cap; // 定員に達したか？
+  const canConfirm = candidates.length >= minCap;
 
   const respValues = respSh.getDataRange().getValues();
   const head = respValues.shift();
   const idx = colIndex_(head);
 
-  const keyOf = (x) => `${String(x.Email).toLowerCase()}|${new Date(x.Timestamp).getTime()}`;
-  const winnerKeys = new Set(winners.map(keyOf));
-
   const newlyConfirmed = [];
 
-  // 1) 定員未満なら「全員 pending」に揃え直して終了
-  if (CONFIG.requireFullCapacityToConfirm && !readyToConfirm) {
+  if (!canConfirm) {
+    // 最小人数未満 → 全員pending維持
     respValues.forEach((row, i) => {
       const obj = asObj_(head, row);
       if (obj.SlotID !== slotId) return;
       if (obj.Status !== 'pending') {
         row[idx.Status] = 'pending';
-        row[idx.NotifiedConfirm] = false; // 念のため
+        row[idx.NotifiedConfirm] = false;
         respSh.getRange(i + 2, 1, 1, row.length).setValues([row]);
       }
     });
-    // スロット集計もリセット
-    const slotRow = slots.findIndex(s => s.SlotID === slotId);
-    slotSh.getRange(slotRow + 2, SLOT_HEADERS.indexOf('ConfirmedCount') + 1).setValue(0);
-    slotSh.getRange(slotRow + 2, SLOT_HEADERS.indexOf('Status') + 1).setValue('open');
+    updateSlotAggregate_(slotId, 0, false);
     return { slotId, filled: false, confirmedCount: 0, newlyConfirmed: [] };
   }
 
-  // 2) 定員達成：勝者は confirmed、非勝者は必ず waitlist（←★ここを強制降格に修正）
+  // 確定処理
+  const winners = candidates.slice(0, cap);
+  const winnerEmails = new Set(winners.map(w => String(w.Email).toLowerCase()));
+
   respValues.forEach((row, i) => {
     const obj = asObj_(head, row);
     if (obj.SlotID !== slotId) return;
 
-    const rowKey = keyOf(obj);
-    const isWinner = winnerKeys.has(rowKey);
+    const email = String(obj.Email).toLowerCase();
+    const isWinner = winnerEmails.has(email);
 
     if (isWinner) {
       if (obj.Status !== 'confirmed') {
@@ -322,12 +484,14 @@ function confirmIfCapacityReached_(slotId) {
         row[idx.NotifiedWait] = false;
         newlyConfirmed.push({
           rowIndex: i + 2,
-          name: obj.Name, email: obj.Email,
-          date: obj.Date, start: obj.Start, end: obj.End
+          name: obj.Name, 
+          email: obj.Email,
+          date: obj.Date, 
+          start: obj.Start, 
+          end: obj.End
         });
       }
     } else {
-      // ← ここがポイント：すでに confirmed でも waitlist に降格
       if (obj.Status !== 'waitlist') {
         row[idx.Status] = 'waitlist';
       }
@@ -335,25 +499,24 @@ function confirmIfCapacityReached_(slotId) {
     respSh.getRange(i + 2, 1, 1, row.length).setValues([row]);
   });
 
-  // confirmed人数を再集計
-  const confirmedNowCount = getResponses_().filter(r => r.SlotID === slotId && r.Status === 'confirmed').length;
+  // 確定人数を集計
+  const confirmedNowCount = winners.length;
 
-  // スロット側の集計
-  const slotRowIdx = slots.findIndex(s => s.SlotID === slotId);
-  slotSh.getRange(slotRowIdx + 2, SLOT_HEADERS.indexOf('ConfirmedCount') + 1).setValue(confirmedNowCount);
-  slotSh.getRange(slotRowIdx + 2, SLOT_HEADERS.indexOf('Status') + 1).setValue(confirmedNowCount >= cap ? 'filled' : 'open');
+  // スロット集計更新
+  updateSlotAggregate_(slotId, confirmedNowCount, confirmedNowCount >= cap);
 
-  // 参加者宛の確定メール
+  // 確定メール送信
   newlyConfirmed.forEach(nc => {
     sendConfirmMail_(nc.name, nc.email, nc.date, nc.start, nc.end, slot.Location, slot.Timezone);
     markNotified_(nc.rowIndex, 'NotifiedConfirm', true);
   });
 
-  // Confirmedシートの upsert（常に先着 cap 名を書き戻す）
-  const winnersLimited = winners.slice(0, cap);
-  const upsert = upsertConfirmedRow_(slot, winnersLimited);
-  if (upsert.created) {
-    sendAdminConfirmMail_(slot, winnersLimited);
+  // Confirmedシート更新
+  updateConfirmedSheet_(slotId);
+  
+  // 管理者メール
+  if (newlyConfirmed.length > 0) {
+    sendAdminConfirmMail_(slot, winners);
   }
 
   return {
@@ -364,24 +527,206 @@ function confirmIfCapacityReached_(slotId) {
   };
 }
 
-
-/** ========= アーカイブ ========= */
-function archiveOtherChoicesForEmail_(emailLower, keepSlotId){
-  var ss=getSS_(), resp=ss.getSheetByName(SHEETS.RESP), arch=ensureArchiveSheet_();
-  var vals=resp.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
-  for (var i=vals.length-1;i>=0;i--){
-    var row=vals[i], obj=asObj_(head,row);
-    if (String(obj.Email).toLowerCase()!==emailLower) continue;
-    if (obj.SlotID===keepSlotId && obj.Status==='confirmed') continue;
-    // pending/waitlist をアーカイブ
-    if (obj.Status!=='confirmed'){
-      arch.appendRow([new Date(), obj.Timestamp, obj.Name, obj.Email, obj.SlotID, obj.Date, obj.Start, obj.End, obj.Status, 'auto-archived-after-confirm']);
-      resp.deleteRow(i+2);
+function updateConfirmedSheet_(slotId) {
+  const sh = ensureConfirmedSheet_();
+  const slot = readSheetAsObjects_(getSS_().getSheetByName(SHEETS.SLOTS))
+    .find(s => s.SlotID === slotId);
+  if (!slot) return;
+  
+  const confirmed = getResponses_()
+    .filter(r => r.SlotID === slotId && r.Status === 'confirmed')
+    .sort((a,b) => new Date(a.Timestamp) - new Date(b.Timestamp));
+  
+  const rowData = [
+    slotId,
+    normDateStr_(slot.Date),
+    normTimeStr_(slot.Start),
+    normTimeStr_(slot.End),
+    slot.Location,
+    new Date()
+  ];
+  
+  // 各参加者の情報を追加
+  for (let i = 0; i < CONFIG.capacity; i++) {
+    if (i < confirmed.length) {
+      rowData.push(confirmed[i].Name, confirmed[i].Email);
+    } else {
+      rowData.push('', '');
     }
+  }
+  
+  rowData.push(confirmed.length); // ActualCount
+  
+  // upsert処理
+  const values = sh.getDataRange().getValues();
+  const head = values.shift();
+  const idx = colIndex_(head);
+  
+  let found = false;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][idx.SlotID] === slotId) {
+      sh.getRange(i + 2, 1, 1, rowData.length).setValues([rowData]);
+      found = true;
+      break;
+    }
+  }
+  
+  if (!found) {
+    sh.appendRow(rowData);
   }
 }
 
-/** ========= メール（確定・管理者・リマインド・キュー） ========= */
+/** ========= アーカイブ処理（改修版） ========= */
+function moveToArchive_(record, reason) {
+  const archSh = ensureArchiveSheet_();
+  const archiveData = [
+    new Date(),                 // ArchivedAt
+    record.Timestamp,
+    record.Name,
+    record.Email,
+    record.SlotID,
+    record.Date,
+    record.Start,
+    record.End,
+    record.Status,
+    reason,
+    record.NotifiedConfirm || false,
+    record.NotifiedWait || false,
+    record.NotifiedRemind || false,
+    ''                          // RestoredAt (empty initially)
+  ];
+  archSh.appendRow(archiveData);
+}
+
+function archiveConfirmedAlternatives_() {
+  const confirmed = getResponses_().filter(r => r.Status === 'confirmed');
+  const confirmedByEmail = groupBy_(confirmed, r => String(r.Email).toLowerCase());
+  
+  Object.keys(confirmedByEmail).forEach(email => {
+    const slots = confirmedByEmail[email];
+    if (slots.length === 0) return;
+    
+    const confirmedSlotId = slots[0].SlotID;
+    
+    // この人の他の申込みをArchive
+    const others = getResponses_().filter(r => 
+      String(r.Email).toLowerCase() === email && 
+      r.SlotID !== confirmedSlotId &&
+      r.Status !== 'confirmed'
+    );
+    
+    others.forEach(r => {
+      moveToArchive_(r, 'auto-archived-confirmed-elsewhere');
+      deleteResponseRow_(r);
+    });
+  });
+}
+
+/** ========= Archive復元機能（新規追加） ========= */
+function restoreFromArchiveIfEligible(email, slotId) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  
+  try {
+    // 1. 他で確定していないことを確認
+    const currentConfirmed = getResponses_()
+      .filter(r => 
+        String(r.Email).toLowerCase() === email.toLowerCase() && 
+        r.Status === 'confirmed'
+      );
+    
+    if (!CONFIG.allowMultipleConfirmationPerEmail && currentConfirmed.length > 0) {
+      return {
+        restored: false,
+        reason: 'already-confirmed-elsewhere',
+        confirmedSlot: currentConfirmed[0].SlotID
+      };
+    }
+    
+    // 2. Archiveから該当レコードを検索
+    const archSh = ensureArchiveSheet_();
+    const archData = archSh.getDataRange().getValues();
+    const archHead = archData.shift();
+    const archIdx = colIndex_(archHead);
+    
+    let targetRow = -1;
+    let targetRecord = null;
+    
+    for (let i = archData.length - 1; i >= 0; i--) {
+      const row = archData[i];
+      if (String(row[archIdx.Email]).toLowerCase() === email.toLowerCase() &&
+          row[archIdx.SlotID] === slotId &&
+          String(row[archIdx.Notes]).includes('auto-archived')) {
+        targetRow = i + 2;
+        targetRecord = row;
+        break;
+      }
+    }
+    
+    if (!targetRecord) {
+      return { restored: false, reason: 'not-found-in-archive' };
+    }
+    
+    // 3. 既に登録済みでないか確認
+    const existing = getResponses_().filter(r => 
+      String(r.Email).toLowerCase() === email.toLowerCase() && 
+      r.SlotID === slotId
+    );
+    
+    if (existing.length > 0) {
+      return { restored: false, reason: 'already-registered' };
+    }
+    
+    // 4. Responsesシートに復元
+    const respSh = getSS_().getSheetByName(SHEETS.RESP);
+    const restoredData = [
+      targetRecord[archIdx.Timestamp],
+      targetRecord[archIdx.Name],
+      targetRecord[archIdx.Email],
+      targetRecord[archIdx.SlotID],
+      targetRecord[archIdx.Date],
+      targetRecord[archIdx.Start],
+      targetRecord[archIdx.End],
+      'waitlist',  // 復元時はwaitlistとして
+      false,       // NotifiedConfirm リセット
+      false,       // NotifiedWait リセット
+      false,       // NotifiedRemind リセット
+      'restored-from-archive'
+    ];
+    
+    respSh.appendRow(restoredData);
+    
+    // 5. Archiveの復元日時を更新
+    archSh.getRange(targetRow, archIdx.RestoredAt + 1)
+      .setValue(new Date());
+    
+    return {
+      restored: true,
+      email: email,
+      slotId: slotId,
+      newStatus: 'waitlist'
+    };
+    
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** ========= メール関連 ========= */
+function updateSlotAggregate_(slotId, confirmedCount, filled){
+  var sh=getSS_().getSheetByName(SHEETS.SLOTS), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head), rowIndex=-1;
+  for (var i=0;i<vals.length;i++){ 
+    if (vals[i][idx.SlotID]===slotId){ 
+      rowIndex=i+2; 
+      break; 
+    } 
+  }
+  if (rowIndex>0){
+    sh.getRange(rowIndex, idx.ConfirmedCount+1).setValue(confirmedCount);
+    sh.getRange(rowIndex, idx.Status+1).setValue(filled ? 'filled' : 'open');
+  }
+}
+
 function makeICS_({title, date, start, end, location, description, tz}) {
   var zone=tz||CONFIG.tz, ds=normDateStr_(date,zone), st=normTimeStr_(start,zone), en=normTimeStr_(end,zone);
   function z(n){ return ('0'+n).slice(-2); }
@@ -393,14 +738,16 @@ function makeICS_({title, date, start, end, location, description, tz}) {
     'DTSTART;TZID='+zone+':'+dtStart,'DTEND;TZID='+zone+':'+dtEnd,'SUMMARY:'+title,'DESCRIPTION:'+description,'LOCATION:'+location,'END:VEVENT','END:VCALENDAR'
   ].join('\r\n');
 }
+
 function sendConfirmMail_(name, email, date, start, end, location, tz) {
   var zone=tz||CONFIG.tz, ds=normDateStr_(date,zone), st=normTimeStr_(start,zone), en=normTimeStr_(end,zone);
   var when=fmtJPDateTime_(ds,st)+' - '+en;
   var subject=renderTemplate_(TEMPLATES.participant.confirmSubject,{when:when});
   var body=renderTemplate_(TEMPLATES.participant.confirmBody,{name:name, when:when, tz:zone, location:location, fromName:CONFIG.mailFromName});
   var ics=makeICS_({title:'実験参加', date:ds, start:st, end:en, location:location, description:'実験参加の予約（確定）', tz:zone});
-  sendMailSmart_({type:'confirm', to:email, subject:subject, body:body, icsText:ics}); // 確定はキューへ
+  sendMailSmart_({type:'confirm', to:email, subject:subject, body:body, icsText:ics});
 }
+
 function sendAdminConfirmMail_(slot, winners) {
   if (!CONFIG.adminEmails||!CONFIG.adminEmails.length) return;
   var zone=CONFIG.tz, ds=normDateStr_(slot.Date,zone), st=normTimeStr_(slot.Start,zone), en=normTimeStr_(slot.End,zone);
@@ -408,12 +755,17 @@ function sendAdminConfirmMail_(slot, winners) {
   var participants = winners.map(function(w){ return '・'+w.Name+' <'+w.Email+'>'; }).join('\n');
   var subject=renderTemplate_(TEMPLATES.admin.confirmSubject,{when:when, count:winners.length});
   var body=renderTemplate_(TEMPLATES.admin.confirmBody,{when:when, tz:zone, location:CONFIG.location, participants:participants});
-  CONFIG.adminEmails.forEach(function(addr){ sendMailSmart_({type:'admin', to:addr, subject:subject, body:body}); });
+  CONFIG.adminEmails.forEach(function(addr){ 
+    sendMailSmart_({type:'admin', to:addr, subject:subject, body:body}); 
+  });
 }
+
 function sendReminders() {
   var tz=CONFIG.tz, now=new Date(), next=new Date(now.getFullYear(), now.getMonth(), now.getDate()+1);
   var yyyy=next.getFullYear(), mm=('0'+(next.getMonth()+1)).slice(-2), dd=('0'+next.getDate()).slice(-2), targetDate=yyyy+'-'+mm+'-'+dd;
-  var confirmed=getResponses_().filter(function(r){ return r.Status==='confirmed' && String(r.Date)===targetDate; });
+  var confirmed=getResponses_().filter(function(r){ 
+    return r.Status==='confirmed' && String(r.Date)===targetDate; 
+  });
   confirmed.forEach(function(r){
     if (String(r.NotifiedRemind)==='true') return;
     var ds=normDateStr_(r.Date,tz), st=normTimeStr_(r.Start,tz), en=normTimeStr_(r.End,tz), when=fmtJPDateTime_(ds,st)+' - '+en;
@@ -424,8 +776,11 @@ function sendReminders() {
   });
 }
 
-/** ========= メールキュー＆上限ケア ========= */
-function ensureMailQuota_(){ return MailApp.getRemainingDailyQuota(); }
+/** ========= メールキュー処理 ========= */
+function ensureMailQuota_(){ 
+  return MailApp.getRemainingDailyQuota(); 
+}
+
 function sendMailSmart_(opt){
   var reserve = (CONFIG.mail && CONFIG.mail.reserveForReminders) || 0;
   var remain = ensureMailQuota_();
@@ -444,9 +799,13 @@ function sendMailSmart_(opt){
   sh.appendRow([new Date(), opt.type, opt.to, opt.subject, opt.body, opt.icsText||'', JSON.stringify(opt.meta||{}), 'pending', '', '']);
   return {sent:false, queued:true};
 }
+
 function processMailQueue_(){
-  var sh=ensureMailQueueSheet_(); var vals=sh.getDataRange().getValues(); if (vals.length<2) return;
-  var head=vals[0]; var idx=colIndex_(head);
+  var sh=ensureMailQueueSheet_(); 
+  var vals=sh.getDataRange().getValues(); 
+  if (vals.length<2) return;
+  var head=vals[0]; 
+  var idx=colIndex_(head);
   var rows=[];
   for (var i=1;i<vals.length;i++){
     if (String(vals[i][idx.Status]).toLowerCase()!=='pending') continue;
@@ -472,49 +831,223 @@ function processMailQueue_(){
     }
   }
 }
-function scheduleQueueFlush_(minutes){ ScriptApp.newTrigger('processMailQueue_').timeBased().after(minutes*60*1000).create(); }
 
-/** ========= Confirmed 反映 ========= */
-function upsertConfirmedRow_(slot, winners) {
-  const sh = ensureConfirmedSheet_();
-  const values = sh.getDataRange().getValues();
-  const head = values.shift();
-  const idx = colIndex_(head);
+/** ========= キャンセル処理（改修版） ========= */
+function applyCancelOps(){
+  var sh=ensureCancelOpsSheet_(), values=sh.getDataRange().getValues(); 
+  if (values.length<2) return;
+  var head=values.shift(), idx=colIndex_(head), ui=SpreadsheetApp.getUi(), notes=[];
+  for (var i=0;i<values.length;i++){
+    var row=values[i], status=String(row[idx.Status]||'').toLowerCase();
+    if (status==='done' || status==='example') continue;
+    var put=function(st,msg){ 
+      row[idx.Status]=st; 
+      row[idx.Result]=msg; 
+      sh.getRange(i+2,1,1,row.length).setValues([row]); 
+    };
+    try{
+      var email=String(row[idx.Email]||'').trim().toLowerCase();
+      if (!email){ put('error','Email必須'); continue; }
+      var scope=String(row[idx.Scope]||'confirmed').trim().toLowerCase();
+      var policy=String(row[idx.SlotPolicy]||'refill-slot').trim().toLowerCase();
+      var fillPolicy=String(row[idx.FillPolicy]||'try-fill').trim().toLowerCase();
+      var reason=String(row[idx.Reason]||'').trim() || 'cancel';
 
-  // winners[0], winners[1] を列化（不足分は空欄）
-  const s1 = winners[0] || {};
-  const s2 = winners[1] || {};
-  const now = new Date();
-
-  const rowData = [
-    slot.SlotID,
-    normDateStr_(slot.Date),
-    normTimeStr_(slot.Start),
-    normTimeStr_(slot.End),
-    slot.Location,
-    now,
-    s1.Name || '', s1.Email || '',
-    s2.Name || '', s2.Email || '',
-  ];
-
-  // 既に該当SlotIDがあるなら更新、無ければ追記
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    if (row[idx.SlotID] === slot.SlotID) {
-      sh.getRange(i + 2, 1, 1, rowData.length).setValues([rowData]);
-      return { created: false, rowIndex: i + 2 };
+      var res=performCancellationForEmail_(email, scope, policy, fillPolicy, reason);
+      res.noCandidateSlots.forEach(function(sid){ notes.push(sid); });
+      put('done','removed='+res.removedCount+', refilled='+res.refilledCount+', dropped='+res.droppedCount);
+    }catch(e){ 
+      put('error', String(e)); 
     }
   }
-  sh.appendRow(rowData);
-  return { created: true, rowIndex: sh.getLastRow() };
+  if (notes.length) ui.alert('補充できない枠があります','候補不足の枠:\n'+notes.join('\n'), ui.ButtonSet.OK);
+  SpreadsheetApp.getActive().toast('CancelOps 完了', 'キャンセル', 5);
 }
 
+function performCancellationForEmail_(emailLower, scope, policy, fillPolicy, reason){
+  var ss=getSS_(), resp=ss.getSheetByName(SHEETS.RESP);
+  var vals=resp.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
+  var removed=0, refilled=0, dropped=0, noCand=[]; 
+  var toRemoveIdx=[], confirmedSlots=new Set();
 
-/** ========= AddSlots / CancelOps ========= */
+  // 削除対象の特定
+  vals.forEach(function(row,i){
+    var obj=asObj_(head,row);
+    if (String(obj.Email).toLowerCase()!==emailLower) return;
+    if (scope==='confirmed' && obj.Status!=='confirmed') return;
+    toRemoveIdx.push(i+2);
+    if (obj.Status==='confirmed') confirmedSlots.add(obj.SlotID);
+  });
+
+  // Archive & 削除
+  for (var n=toRemoveIdx.length-1;n>=0;n--){
+    var irow=toRemoveIdx[n];
+    var row=resp.getRange(irow,1,1,resp.getLastColumn()).getValues()[0];
+    var o=asObj_(head,row);
+    moveToArchive_(o, 'cancel:'+reason);
+    resp.deleteRow(irow); 
+    removed++;
+  }
+
+  // 各確定枠の処理
+  confirmedSlots.forEach(function(slotId){
+    if (policy==='drop-slot'){
+      // スロット全体をキャンセル
+      dropEntireSlot_(slotId);
+      dropped++;
+    } else {
+      // 補充を試みる
+      const result = tryRefillSlot_(slotId, fillPolicy);
+      if (result.refilled) {
+        refilled++;
+      } else {
+        noCand.push(slotId);
+      }
+    }
+  });
+
+  return {removedCount:removed, refilledCount:refilled, droppedCount:dropped, noCandidateSlots:noCand};
+}
+
+function tryRefillSlot_(slotId, fillPolicy) {
+  const slot = readSheetAsObjects_(getSS_().getSheetByName(SHEETS.SLOTS))
+    .find(s => s.SlotID === slotId);
+  if (!slot) return {refilled: false};
+  
+  const capacity = Number(slot.Capacity);
+  const minCap = CONFIG.minCapacityToConfirm;
+  
+  // 現在の確定者数
+  const currentConfirmed = getResponses_()
+    .filter(r => r.SlotID === slotId && r.Status === 'confirmed');
+  const currentCount = currentConfirmed.length;
+  
+  // 補充必要数
+  const needed = capacity - currentCount;
+  
+  // 1. Responsesから候補を探す
+  let candidates = getResponses_()
+    .filter(r => r.SlotID === slotId && 
+            (r.Status === 'waitlist' || r.Status === 'pending'))
+    .filter(r => !hasConfirmedElsewhere_(r.Email, slotId))
+    .sort((a,b) => new Date(a.Timestamp) - new Date(b.Timestamp));
+  
+  // 2. 不足の場合はArchiveから復元
+  if (candidates.length < needed) {
+    const additionalNeeded = needed - candidates.length;
+    const restored = restoreFromArchiveForSlot_(slotId, additionalNeeded);
+    candidates = candidates.concat(restored);
+  }
+  
+  // 3. 補充後の人数チェック
+  const afterFillCount = currentCount + Math.min(candidates.length, needed);
+  
+  if (afterFillCount < minCap) {
+    // 最小人数未満
+    switch(fillPolicy) {
+      case 'keep-partial':
+        // 人数不足でも維持
+        break;
+      case 'to-pending':
+        // 全員pendingに戻す
+        currentConfirmed.forEach(r => setResponseStatus_(r, 'pending'));
+        updateSlotAggregate_(slotId, 0, false);
+        return {refilled: false};
+      case 'cancel-all':
+        // 全員キャンセル
+        dropEntireSlot_(slotId);
+        return {refilled: false};
+      default: // try-fill
+        if (currentCount > 0) {
+          // 現在の確定者は維持
+        } else {
+          return {refilled: false};
+        }
+    }
+  }
+  
+  // 4. 補充実行
+  const toPromote = candidates.slice(0, needed);
+  toPromote.forEach(c => {
+    setResponseStatus_(c, 'confirmed');
+    sendConfirmMail_(c.Name, c.Email, c.Date, c.Start, c.End, slot.Location, slot.Timezone);
+  });
+  
+  // 5. Confirmedシート更新
+  if (toPromote.length > 0) {
+    updateConfirmedSheet_(slotId);
+    const newConfirmed = getResponses_()
+      .filter(r => r.SlotID === slotId && r.Status === 'confirmed');
+    sendAdminConfirmMail_(slot, newConfirmed);
+  }
+  
+  return {refilled: toPromote.length > 0};
+}
+
+function restoreFromArchiveForSlot_(slotId, maxCount) {
+  const archSh = ensureArchiveSheet_();
+  const archData = archSh.getDataRange().getValues();
+  if (archData.length < 2) return [];
+  
+  const archHead = archData.shift();
+  const archIdx = colIndex_(archHead);
+  const restored = [];
+  
+  for (let i = archData.length - 1; i >= 0 && restored.length < maxCount; i--) {
+    const row = archData[i];
+    if (row[archIdx.SlotID] !== slotId) continue;
+    if (!String(row[archIdx.Notes]).includes('auto-archived')) continue;
+    if (row[archIdx.RestoredAt]) continue;
+    
+    const email = String(row[archIdx.Email]).toLowerCase();
+    const result = restoreFromArchiveIfEligible(email, slotId);
+    
+    if (result.restored) {
+      restored.push({
+        Name: row[archIdx.Name],
+        Email: row[archIdx.Email],
+        Date: row[archIdx.Date],
+        Start: row[archIdx.Start],
+        End: row[archIdx.End]
+      });
+    }
+  }
+  
+  return restored;
+}
+
+function dropEntireSlot_(slotId) {
+  const confirmed = getResponses_()
+    .filter(r => r.SlotID === slotId && r.Status === 'confirmed');
+  
+  confirmed.forEach(r => {
+    moveToArchive_(r, 'slot-canceled');
+    deleteResponseRow_(r);
+    
+    // キャンセル通知
+    const ds=normDateStr_(r.Date), st=normTimeStr_(r.Start), en=normTimeStr_(r.End);
+    const when=fmtJPDateTime_(ds,st)+' - '+en;
+    const subject=renderTemplate_(TEMPLATES.participant.slotCanceledSubject,{when:when});
+    const body=renderTemplate_(TEMPLATES.participant.slotCanceledBody,{
+      name:r.Name, when:when, tz:CONFIG.tz, location:CONFIG.location, fromName:CONFIG.mailFromName
+    });
+    sendMailSmart_({type:'admin', to:r.Email, subject:subject, body:body});
+  });
+  
+  // Confirmedシートから削除
+  deleteConfirmedRow_(slotId);
+  updateSlotAggregate_(slotId, 0, false);
+}
+
+/** ========= AddSlots処理 ========= */
 function applyAddSlots(){
-  var sh=ensureAddSlotsSheet_(), data=sh.getDataRange().getValues(); if (data.length<2) return;
+  var sh=ensureAddSlotsSheet_(), data=sh.getDataRange().getValues(); 
+  if (data.length<2) return;
   var head=data.shift(), idx=colIndex_(head);
-  var put=function(row, st, msg){ row[idx.Status]=st; row[idx.Result]=msg; };
+  var put=function(row, st, msg){ 
+    row[idx.Status]=st; 
+    row[idx.Result]=msg; 
+  };
 
   for (var i=0;i<data.length;i++){
     var row=data[i], statusNow=String(row[idx.Status]||'').toLowerCase();
@@ -539,132 +1072,48 @@ function applyAddSlots(){
       };
       var normDate=function(v){ return normDateStr_(v, tz); };
       var normTime=function(v){ return normTimeStr_(v, tz); };
-      var parseTW=function(txt){ return String(txt||'').split(',').map(function(x){return x.trim();}).filter(Boolean).map(function(w){var p=w.split('-'); return [normTime(p[0]), normTime(p[1])];}); };
+      var parseTW=function(txt){ 
+        return String(txt||'').split(',').map(function(x){return x.trim();}).filter(Boolean)
+          .map(function(w){var p=w.split('-'); return [normTime(p[0]), normTime(p[1])];});
+      };
       var twOrDefault=function(cell){
         var s=String(cell||'').trim().toUpperCase();
-        if (!s || s==='DEFAULT') return (CONFIG.timeWindows||[]).map(function(w){var p=w.split('-'); return [normTime(p[0]), normTime(p[1])];});
+        if (!s || s==='DEFAULT') return (CONFIG.timeWindows||[])
+          .map(function(w){var p=w.split('-'); return [normTime(p[0]), normTime(p[1])];});
         return parseTW(s);
       };
 
       if (mode==='datetime'){
         var ds=normDate(row[idx.Date]), st=row[idx.Start], en=row[idx.End];
-        if (!st || !en){ var list=parseTW(row[idx.TimeWindows]); if (list.length!==1) throw new Error('TimeWindows は1つだけ'); st=list[0][0]; en=list[0][1]; }
+        if (!st || !en){ 
+          var list=parseTW(row[idx.TimeWindows]); 
+          if (list.length!==1) throw new Error('TimeWindows は1つだけ'); 
+          st=list[0][0]; en=list[0][1]; 
+        }
         else { st=normTime(st); en=normTime(en); }
         addOne(ds, st, en);
       } else if (mode==='date'){
-        var ds2=normDate(row[idx.Date]); if (!ds2) throw new Error('Date が必要');
+        var ds2=normDate(row[idx.Date]); 
+        if (!ds2) throw new Error('Date が必要');
         twOrDefault(row[idx.TimeWindows]).forEach(function(p){ addOne(ds2, p[0], p[1]); });
       } else {
-        var from=normDate(row[idx.FromDate]), to=normDate(row[idx.ToDate]); if(!from||!to) throw new Error('From/To が必要');
+        var from=normDate(row[idx.FromDate]), to=normDate(row[idx.ToDate]); 
+        if(!from||!to) throw new Error('From/To が必要');
         var tws=twOrDefault(row[idx.TimeWindows]);
         for (var d=new Date(from+'T00:00:00'); d<=new Date(to+'T00:00:00'); d=new Date(d.getTime()+86400000)){
           if (exWk && (d.getDay()===0 || d.getDay()===6)) continue;
           var y=d.getFullYear(), m=('0'+(d.getMonth()+1)).slice(-2), dd=('0'+d.getDate()).slice(-2);
-          var ds3=y+'-'+m+'-'+dd; tws.forEach(function(p){ addOne(ds3, p[0], p[1]); });
+          var ds3=y+'-'+m+'-'+dd; 
+          tws.forEach(function(p){ addOne(ds3, p[0], p[1]); });
         }
       }
       put(row,'done','added='+added+', skipped='+skipped);
-    }catch(e){ put(row,'error', String(e)); }
+    }catch(e){ 
+      put(row,'error', String(e)); 
+    }
     sh.getRange(i+2,1,1,row.length).setValues([row]);
   }
   SpreadsheetApp.getActive().toast('AddSlots 完了', '追加枠', 5);
-}
-
-function applyCancelOps(){
-  var sh=ensureCancelOpsSheet_(), values=sh.getDataRange().getValues(); if (values.length<2) return;
-  var head=values.shift(), idx=colIndex_(head), ui=SpreadsheetApp.getUi(), notes=[];
-  for (var i=0;i<values.length;i++){
-    var row=values[i], status=String(row[idx.Status]||'').toLowerCase();
-    if (status==='done' || status==='example') continue;
-    var put=function(st,msg){ row[idx.Status]=st; row[idx.Result]=msg; sh.getRange(i+2,1,1,row.length).setValues([row]); };
-    try{
-      var email=String(row[idx.Email]||'').trim().toLowerCase();
-      if (!email){ put('error','Email必須'); continue; }
-      var scope=String(row[idx.Scope]||'confirmed').trim().toLowerCase();
-      var policy=String(row[idx.SlotPolicy]||'refill-slot').trim().toLowerCase();
-      var reason=String(row[idx.Reason]||'').trim() || (scope==='all'?'delete-all':'cancel-confirmed');
-
-      var res=performCancellationForEmail_(email, scope, policy, reason);
-      res.noCandidateSlots.forEach(function(sid){ notes.push(sid); });
-      put('done','removed='+res.removedCount+', slotDrop='+res.slotDropCount+', refilled='+res.refilledCount+', noCandidate='+res.noCandidateSlots.length);
-    }catch(e){ put('error', String(e)); }
-  }
-  if (notes.length) ui.alert('補充できない枠があります','候補不足の枠:\n'+notes.join('\n'), ui.ButtonSet.OK);
-  SpreadsheetApp.getActive().toast('CancelOps 完了', 'キャンセル', 5);
-}
-
-// 簡易キャンセル骨子
-function performCancellationForEmail_(emailLower, scope, policy, reason){
-  var ss=getSS_(), resp=ss.getSheetByName(SHEETS.RESP), confSh=ensureConfirmedSheet_();
-  var vals=resp.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
-  var removed=0, slotDrop=0, refilled=0, noCand=[]; var toRemoveIdx=[], confirmedSlots=new Set();
-
-  vals.forEach(function(row,i){
-    var obj=asObj_(head,row);
-    if (String(obj.Email).toLowerCase()!==emailLower) return;
-    if (scope==='confirmed' && obj.Status!=='confirmed') return;
-    toRemoveIdx.push(i+2);
-    if (obj.Status==='confirmed') confirmedSlots.add(obj.SlotID);
-  });
-
-  for (var n=toRemoveIdx.length-1;n>=0;n--){
-    var irow=toRemoveIdx[n];
-    var row=resp.getRange(irow,1,1,resp.getLastColumn()).getValues()[0];
-    var o=asObj_(head,row);
-    ensureArchiveSheet_().appendRow([new Date(), o.Timestamp, o.Name, o.Email, o.SlotID, o.Date, o.Start, o.End, o.Status, 'cancel:'+reason]);
-    resp.deleteRow(irow); removed++;
-  }
-
-  confirmedSlots.forEach(function(slotId){
-    if (policy==='drop-slot'){
-      var R=getResponses_().filter(function(r){ return r.SlotID===slotId && r.Status==='confirmed'; });
-      R.forEach(function(r){
-        if (String(r.Email).toLowerCase()===emailLower) return;
-        ensureArchiveSheet_().appendRow([new Date(), r.Timestamp, r.Name, r.Email, r.SlotID, r.Date, r.Start, r.End, r.Status, 'slot-canceled']);
-        deleteResponseRow_(r);
-        var ds=normDateStr_(r.Date), st=normTimeStr_(r.Start), en=normTimeStr_(r.End), when=fmtJPDateTime_(ds,st)+' - '+en;
-        var subject=renderTemplate_(TEMPLATES.participant.slotCanceledSubject,{when:when});
-        var body=renderTemplate_(TEMPLATES.participant.slotCanceledBody,{name:r.Name, when:when, tz:CONFIG.tz, location:CONFIG.location, fromName:CONFIG.mailFromName});
-        sendMailSmart_({type:'admin', to:r.Email, subject:subject, body:body});
-      });
-      deleteConfirmedRow_(slotId); slotDrop++; updateSlotAggregate_(slotId,0,false);
-    } else {
-      var waitOrPending=getResponses_().filter(function(r){ return r.SlotID===slotId && (r.Status==='waitlist'||r.Status==='pending'); })
-        .sort(function(a,b){ return new Date(a.Timestamp)-new Date(b.Timestamp); });
-      if (waitOrPending.length < CONFIG.capacity){ noCand.push(slotId); return; }
-      waitOrPending.slice(0, CONFIG.capacity).forEach(function(c){ setResponseStatus_(c,'confirmed'); });
-      updateSlotAggregate_(slotId, CONFIG.capacity, true);
-      var slot=readSheetAsObjects_(getSS_().getSheetByName(SHEETS.SLOTS)).find(function(s){ return s.SlotID===slotId; });
-      var winners=getResponses_().filter(function(r){ return r.SlotID===slotId && r.Status==='confirmed'; }).slice(0,CONFIG.capacity);
-      upsertConfirmedRow_(slot, winners);
-      winners.forEach(function(w){ sendConfirmMail_(w.Name, w.Email, w.Date, w.Start, w.End, slot.Location, slot.Timezone); });
-      sendAdminConfirmMail_(slot, winners);
-      refilled++;
-    }
-  });
-
-  return {removedCount:removed, slotDropCount:slotDrop, refilledCount:refilled, noCandidateSlots:noCand};
-}
-function deleteResponseRow_(rec){
-  var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
-  for (var i=0;i<vals.length;i++){
-    var r=asObj_(head, vals[i]);
-    if (r.Timestamp==rec.Timestamp && r.Email==rec.Email && r.SlotID==rec.SlotID){ sh.deleteRow(i+2); return true; }
-  } return false;
-}
-function deleteConfirmedRow_(slotId){
-  var sh=ensureConfirmedSheet_(), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
-  for (var i=0;i<vals.length;i++){ if (vals[i][idx.SlotID]===slotId){ sh.deleteRow(i+2); return true; } }
-  return false;
-}
-function setResponseStatus_(rec, status){
-  var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
-  for (var i=0;i<vals.length;i++){
-    var r=asObj_(head, vals[i]);
-    if (r.Timestamp==rec.Timestamp && r.Email==rec.Email && r.SlotID==rec.SlotID){
-      vals[i][idx.Status]=status; sh.getRange(i+2,1,1,vals[i].length).setValues([vals[i]]); return true;
-    }
-  } return false;
 }
 
 /** ========= トリガー＆UI ========= */
@@ -690,25 +1139,13 @@ function setupTriggers() {
   ScriptApp.newTrigger('processMailQueue_')
     .timeBased().everyHours(1).nearMinute(min).create();
 
-  // ここがポイント：インストール型 onOpen（スタンドアロンでもメニューが出る）
+  // インストール型 onOpen
   if (typeof SS_ID === 'string' && SS_ID) {
     ScriptApp.newTrigger('onOpenUi_')
       .forSpreadsheet(SS_ID)
       .onOpen()
       .create();
   }
-}
-
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('スケジューラ')
-    .addItem('操作パネル（ボタン）', 'openControlPanel')
-    .addItem('追加枠を反映（AddSlots）', 'applyAddSlots')
-    .addItem('キャンセル処理（CancelOps）', 'applyCancelOps')
-    .addSeparator()
-    .addItem('枠生成（setup）', 'setup')
-    .addItem('トリガー設定（setupTriggers）', 'setupTriggers')
-    .addToUi();
 }
 
 function addSchedulerMenu_() {
@@ -721,12 +1158,10 @@ function addSchedulerMenu_() {
     .addToUi();
 }
 
-// コンテナバインド時に効く
 function onOpen() {
   addSchedulerMenu_();
 }
 
-// スタンドアロンでも効く（インストール型トリガが呼ぶ）
 function onOpenUi_() {
   addSchedulerMenu_();
 }
@@ -745,16 +1180,74 @@ function openControlPanel(){
   SpreadsheetApp.getUi().showSidebar(html);
 }
 
+/** ========= 日次ダイジェスト ========= */
+function sendDailyAdminDigest() {
+  if (!CONFIG.adminEmails || !CONFIG.adminEmails.length) return;
+  
+  const today = new Date();
+  const todayStr = normDateStr_(today);
+  const confirmed = getResponses_()
+    .filter(r => r.Status === 'confirmed' && r.Date >= todayStr)
+    .sort((a,b) => (a.Date+a.Start).localeCompare(b.Date+b.Start));
+  
+  if (confirmed.length === 0) return;
+  
+  const bySlot = groupBy_(confirmed, r => `${r.Date}_${r.Start}`);
+  let body = renderTemplate_(TEMPLATES.admin.dailyDigestBodyIntro, {date: todayStr});
+  
+  Object.keys(bySlot).sort().forEach(key => {
+    const group = bySlot[key];
+    const first = group[0];
+    const when = fmtJPDateTime_(first.Date, first.Start) + ' - ' + first.End;
+    body += '\n■ ' + when + '\n';
+    group.forEach(p => {
+      body += '  ・' + p.Name + ' <' + p.Email + '>\n';
+    });
+  });
+  
+  const subject = renderTemplate_(TEMPLATES.admin.dailyDigestSubject, {date: todayStr});
+  CONFIG.adminEmails.forEach(addr => {
+    sendMailSmart_({type:'admin', to:addr, subject:subject, body:body});
+  });
+}
+
 /** ========= 共通ヘルパ ========= */
-function getResponses_(){ var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(); return vals.map(function(r){ return asObj_(head,r); }); }
-function readSheetAsObjects_(sh){ var vals=sh.getDataRange().getValues(), head=vals.shift(); return vals.map(function(r){ return asObj_(head,r); }); }
-function asObj_(head,row){ var o={}; head.forEach(function(h,i){ o[h]=row[i]; }); return o; }
-function groupBy_(arr,keyFn){ return arr.reduce(function(m,x){ var k=keyFn(x); (m[k]||(m[k]=[])).push(x); return m; },{}); }
-function colIndex_(head){ var o={}; head.forEach(function(h,i){ o[h]=i; }); return o; }
+function getResponses_(){ 
+  var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(); 
+  return vals.map(function(r){ return asObj_(head,r); }); 
+}
+
+function readSheetAsObjects_(sh){ 
+  var vals=sh.getDataRange().getValues(), head=vals.shift(); 
+  return vals.map(function(r){ return asObj_(head,r); }); 
+}
+
+function asObj_(head,row){ 
+  var o={}; 
+  head.forEach(function(h,i){ o[h]=row[i]; }); 
+  return o; 
+}
+
+function groupBy_(arr,keyFn){ 
+  return arr.reduce(function(m,x){ 
+    var k=keyFn(x); 
+    (m[k]||(m[k]=[])).push(x); 
+    return m; 
+  },{}); 
+}
+
+function colIndex_(head){ 
+  var o={}; 
+  head.forEach(function(h,i){ o[h]=i; }); 
+  return o; 
+}
+
 function markNotified_(rowIndex, colName, val) {
   var sh=getSS_().getSheetByName(SHEETS.RESP), head=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];
-  var idx=head.indexOf(colName)+1; sh.getRange(rowIndex, idx).setValue(val);
+  var idx=head.indexOf(colName)+1; 
+  sh.getRange(rowIndex, idx).setValue(val);
 }
+
 function markNotifiedByFind_(rec, colName, val) {
   const sh = getSS_().getSheetByName(SHEETS.RESP);
   const data = sh.getDataRange().getValues();
@@ -763,6 +1256,7 @@ function markNotifiedByFind_(rec, colName, val) {
   const recTime = rec.Timestamp instanceof Date ? rec.Timestamp.getTime() : new Date(rec.Timestamp).getTime();
   const recEmail = String(rec.Email).toLowerCase();
   const recSlot  = String(rec.SlotID);
+  
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const rowTime = row[idx.Timestamp] instanceof Date ? row[idx.Timestamp].getTime() : new Date(row[idx.Timestamp]).getTime();
@@ -777,20 +1271,46 @@ function markNotifiedByFind_(rec, colName, val) {
   return false;
 }
 
-/** ========= バックフィル（任意で1回） ========= */
-function backfillNotifiedConfirm_() {
-  const sh = getSS_().getSheetByName(SHEETS.RESP);
-  const vals = sh.getDataRange().getValues();
-  if (vals.length < 2) return;
-  const head = vals[0];
-  const idx = colIndex_(head);
-  for (let r = 1; r < vals.length; r++) {
-    const row = vals[r];
-    const status = String(row[idx.Status]);
-    const flag = String(row[idx.NotifiedConfirm]);
-    if (status === 'confirmed' && flag !== 'true') {
-      row[idx.NotifiedConfirm] = true;
-      sh.getRange(r+1, 1, 1, row.length).setValues([row]);
+function deleteResponseRow_(rec){
+  var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
+  for (var i=0;i<vals.length;i++){
+    var r=asObj_(head, vals[i]);
+    if (r.Timestamp==rec.Timestamp && r.Email==rec.Email && r.SlotID==rec.SlotID){ 
+      sh.deleteRow(i+2); 
+      return true; 
     }
-  }
+  } 
+  return false;
 }
+
+function deleteConfirmedRow_(slotId){
+  var sh=ensureConfirmedSheet_(), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
+  for (var i=0;i<vals.length;i++){ 
+    if (vals[i][idx.SlotID]===slotId){ 
+      sh.deleteRow(i+2); 
+      return true; 
+    } 
+  }
+  return false;
+}
+
+function setResponseStatus_(rec, status){
+  var sh=getSS_().getSheetByName(SHEETS.RESP), vals=sh.getDataRange().getValues(), head=vals.shift(), idx=colIndex_(head);
+  for (var i=0;i<vals.length;i++){
+    var r=asObj_(head, vals[i]);
+    if (r.Timestamp==rec.Timestamp && r.Email==rec.Email && r.SlotID==rec.SlotID){
+      vals[i][idx.Status]=status; 
+      sh.getRange(i+2,1,1,vals[i].length).setValues([vals[i]]); 
+      return true;
+    }
+  } 
+  return false;
+}
+
+function hasConfirmedElsewhere_(email, excludeSlotId) {
+  const confirmed = getResponses_().filter(r => 
+    String(r.Email).toLowerCase() === email.toLowerCase() && 
+    r.Status === 'confirmed' && 
+    r.SlotID !== excludeSlotId
+  );
+  return confirmed.length > 0;
