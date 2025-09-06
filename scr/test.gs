@@ -917,7 +917,235 @@ function logConfirmedSheet() {
 function generateTestData10() {
   generateTestData10Accounts();
 }
+
+
 // ========= メールテスト機能 =========
+
+function testAllEmailsToAdmin() {
+  const ui = SpreadsheetApp.getUi();
+  const result = ui.alert(
+    '管理者宛メール送信テスト',
+    '管理者メールアドレス宛に全種類のメールを実際に送信します。\n' +
+    `送信先: ${CONFIG.adminEmails.join(', ')}\n\n` +
+    '本当に送信しますか？',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (result !== ui.Button.YES) return;
+  
+  console.log('===== 管理者宛メール送信テスト開始 =====');
+  
+  // 管理者メールアドレスを確認
+  if (!CONFIG.adminEmails || CONFIG.adminEmails.length === 0) {
+    ui.alert('エラー', '管理者メールアドレスが設定されていません', ui.ButtonSet.OK);
+    return;
+  }
+  
+  const adminEmail = CONFIG.adminEmails[0];
+  
+  // テスト用スロット情報
+  const testSlot = {
+    SlotID: 'TEST_2025-09-30_1100',
+    Date: '2025-09-30',
+    Start: '11:00',
+    End: '12:00',
+    Location: CONFIG.location,
+    Timezone: CONFIG.tz,
+    Capacity: CONFIG.capacity
+  };
+  
+  const testDate = '2025-09-30';
+  const testStart = '11:00';
+  const testEnd = '12:00';
+  
+  let sentCount = 0;
+  let errors = [];
+  
+  try {
+    // 1. 参加者向け：受付メール
+    console.log('1. 受付メール送信中...');
+    const receiptSubject = '[TEST] ' + renderTemplate_(TEMPLATES.participant.receiptSubject, {});
+    const receiptBody = '【これはテストメールです】\n\n' + 
+      renderTemplate_(TEMPLATES.participant.receiptBody, {
+        name: 'テストユーザー',
+        lines: `・${fmtJPDateTime_(testDate, testStart)} - ${testEnd}（${CONFIG.tz}）`,
+        fromName: CONFIG.mailFromName
+      });
+    
+    MailApp.sendEmail(adminEmail, receiptSubject, receiptBody, {
+      name: CONFIG.mailFromName
+    });
+    sentCount++;
+    console.log('  ✓ 受付メール送信完了');
+    
+  } catch(e) {
+    errors.push('受付メール: ' + e.toString());
+    console.error('  × 受付メール送信失敗:', e);
+  }
+  
+  try {
+    // 2. 参加者向け：確定メール（ICS付き）
+    console.log('2. 確定メール送信中...');
+    const when = fmtJPDateTime_(testDate, testStart) + ' - ' + testEnd;
+    const confirmSubject = '[TEST] ' + renderTemplate_(TEMPLATES.participant.confirmSubject, {when: when});
+    const confirmBody = '【これはテストメールです】\n\n' + 
+      renderTemplate_(TEMPLATES.participant.confirmBody, {
+        name: 'テストユーザー',
+        when: when,
+        tz: CONFIG.tz,
+        location: CONFIG.location,
+        fromName: CONFIG.mailFromName
+      });
+    
+    const ics = makeICS_({
+      title: '[TEST] 実験参加',
+      date: testDate,
+      start: testStart,
+      end: testEnd,
+      location: CONFIG.location,
+      description: 'テスト用のカレンダーイベント',
+      tz: CONFIG.tz
+    });
+    
+    GmailApp.sendEmail(adminEmail, confirmSubject, confirmBody, {
+      name: CONFIG.mailFromName,
+      attachments: [Utilities.newBlob(ics, 'text/calendar', 'test-invite.ics')]
+    });
+    sentCount++;
+    console.log('  ✓ 確定メール送信完了');
+    
+  } catch(e) {
+    errors.push('確定メール: ' + e.toString());
+    console.error('  × 確定メール送信失敗:', e);
+  }
+  
+  try {
+    // 3. 参加者向け：リマインダーメール
+    console.log('3. リマインダーメール送信中...');
+    const when2 = fmtJPDateTime_(testDate, testStart) + ' - ' + testEnd;
+    const remindSubject = '[TEST] ' + renderTemplate_(TEMPLATES.participant.remindSubject, {when: when2});
+    const remindBody = '【これはテストメールです】\n\n' + 
+      renderTemplate_(TEMPLATES.participant.remindBody, {
+        name: 'テストユーザー',
+        when: when2,
+        tz: CONFIG.tz,
+        location: CONFIG.location,
+        fromName: CONFIG.mailFromName
+      });
+    
+    MailApp.sendEmail(adminEmail, remindSubject, remindBody, {
+      name: CONFIG.mailFromName
+    });
+    sentCount++;
+    console.log('  ✓ リマインダーメール送信完了');
+    
+  } catch(e) {
+    errors.push('リマインダーメール: ' + e.toString());
+    console.error('  × リマインダーメール送信失敗:', e);
+  }
+  
+  try {
+    // 4. 参加者向け：キャンセル通知
+    console.log('4. キャンセル通知メール送信中...');
+    const when3 = fmtJPDateTime_(testDate, testStart) + ' - ' + testEnd;
+    const cancelSubject = '[TEST] ' + renderTemplate_(TEMPLATES.participant.slotCanceledSubject, {when: when3});
+    const cancelBody = '【これはテストメールです】\n\n' + 
+      renderTemplate_(TEMPLATES.participant.slotCanceledBody, {
+        name: 'テストユーザー',
+        when: when3,
+        tz: CONFIG.tz,
+        location: CONFIG.location,
+        fromName: CONFIG.mailFromName
+      });
+    
+    MailApp.sendEmail(adminEmail, cancelSubject, cancelBody, {
+      name: CONFIG.mailFromName
+    });
+    sentCount++;
+    console.log('  ✓ キャンセル通知メール送信完了');
+    
+  } catch(e) {
+    errors.push('キャンセル通知: ' + e.toString());
+    console.error('  × キャンセル通知メール送信失敗:', e);
+  }
+  
+  try {
+    // 5. 管理者向け：確定通知
+    console.log('5. 管理者確定通知送信中...');
+    const when4 = fmtJPDateTime_(testDate, testStart) + ' - ' + testEnd;
+    const adminConfirmSubject = '[TEST] ' + renderTemplate_(TEMPLATES.admin.confirmSubject, {
+      when: when4,
+      count: CONFIG.capacity
+    });
+    const adminConfirmBody = '【これはテストメールです】\n\n' + 
+      renderTemplate_(TEMPLATES.admin.confirmBody, {
+        when: when4,
+        tz: CONFIG.tz,
+        location: CONFIG.location,
+        participants: '・テストユーザー1 <test1@example.com>\n・テストユーザー2 <test2@example.com>'
+      });
+    
+    MailApp.sendEmail(adminEmail, adminConfirmSubject, adminConfirmBody, {
+      name: CONFIG.mailFromName
+    });
+    sentCount++;
+    console.log('  ✓ 管理者確定通知送信完了');
+    
+  } catch(e) {
+    errors.push('管理者確定通知: ' + e.toString());
+    console.error('  × 管理者確定通知送信失敗:', e);
+  }
+  
+  try {
+    // 6. 管理者向け：日次ダイジェスト
+    console.log('6. 管理者日次ダイジェスト送信中...');
+    const digestSubject = '[TEST] ' + renderTemplate_(TEMPLATES.admin.dailyDigestSubject, {
+      date: testDate
+    });
+    
+    let digestBody = '【これはテストメールです】\n\n';
+    digestBody += renderTemplate_(TEMPLATES.admin.dailyDigestBodyIntro, {date: testDate});
+    digestBody += '\n━━━ 2025年09月30日(火) ━━━\n\n';
+    digestBody += '▼ 11:00 - 12:00 （2/2名確定） ★満席\n';
+    digestBody += '  ・テストユーザー1 <test1@example.com>\n';
+    digestBody += '  ・テストユーザー2 <test2@example.com>\n\n';
+    digestBody += '▼ 13:20 - 14:20 （1/2名確定） ※あと1名で満席\n';
+    digestBody += '  ・テストユーザー3 <test3@example.com>\n';
+    digestBody += '  （申込状況: pending 1名 → あと1名で確定可能）\n\n';
+    digestBody += '━━━ 申込受付中（未確定）━━━\n\n';
+    digestBody += '・2025年09月30日(火) 15:00 - 16:00: 申込1名 （あと1名で確定）\n';
+    
+    MailApp.sendEmail(adminEmail, digestSubject, digestBody, {
+      name: CONFIG.mailFromName
+    });
+    sentCount++;
+    console.log('  ✓ 管理者日次ダイジェスト送信完了');
+    
+  } catch(e) {
+    errors.push('管理者日次ダイジェスト: ' + e.toString());
+    console.error('  × 管理者日次ダイジェスト送信失敗:', e);
+  }
+  
+  // 結果表示
+  let message = '【管理者宛メール送信テスト結果】\n\n';
+  message += `送信先: ${adminEmail}\n`;
+  message += `送信成功: ${sentCount}/6通\n\n`;
+  
+  if (errors.length > 0) {
+    message += '【エラー】\n';
+    errors.forEach(err => {
+      message += `・${err}\n`;
+    });
+  } else {
+    message += '✅ すべてのメールが正常に送信されました\n\n';
+    message += '管理者メールアドレスの受信箱を確認してください。\n';
+    message += '※ [TEST] というプレフィックスが付いています';
+  }
+  
+  ui.alert('テスト結果', message, ui.ButtonSet.OK);
+  console.log('===== 管理者宛メール送信テスト完了 =====');
+}
+
 function testAllEmails() {
   enableTestMode();
   
@@ -1179,18 +1407,23 @@ function showMailTestResults() {
   let message = '【メールテスト結果】\n\n';
   message += '最新のテストメール記録:\n';
   
-  recentLogs.forEach(row => {
+  recentLogs.forEach((row, index) => {
     if (row[0] instanceof Date) {
       const timestamp = Utilities.formatDate(row[0], 'Asia/Tokyo', 'HH:mm:ss');
       const type = row[1];
       const to = row[2];
-      const status = row[4] || 'sent';
-      message += `${timestamp} [${type}] → ${to} (${status})\n`;
+      const subject = row[3];
+      const status = row[5] || 'sent';
+      message += `${timestamp} [${type}] → ${to}\n`;
+      message += `  件名: ${subject}\n`;
+      message += `  状態: ${status}\n`;
     }
   });
   
   message += '\n※ テストモードのため実際のメール送信は行われていません';
-  message += '\n※ 詳細はTestMailLogシートを確認してください';
+  message += '\n※ メール本文を含む詳細はTestMailLogシートを確認してください';
+  message += '\n\n実際に管理者宛にメールを送信する場合は、';
+  message += '\n「管理者宛送信テスト」を実行してください。';
   
   SpreadsheetApp.getUi().alert('メールテスト結果', message, SpreadsheetApp.getUi().ButtonSet.OK);
   
@@ -2230,7 +2463,9 @@ function addTestMenu() {
       .addItem('🗄️ 個別: Archive復元', 'testArchiveRestoreOnly'))
     .addSeparator()
     .addSubMenu(ui.createMenu('📧 メールテスト')
-      .addItem('全メールテスト', 'testAllEmails')
+      .addItem('全メールテスト（ログのみ）', 'testAllEmails')
+      .addItem('⚠️ 管理者宛送信テスト（実送信）', 'testAllEmailsToAdmin')
+      .addSeparator()
       .addItem('受付メールのみ', 'testReceiptMailOnly')
       .addItem('確定メールのみ', 'testConfirmMailOnly')
       .addItem('管理者ダイジェストのみ', 'testAdminDigestOnly'))
