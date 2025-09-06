@@ -42,7 +42,7 @@ const CONFIG = {
 
   // 表示/通知
   location: '立命館大学 OIC ○号館 ○F 実験室A',
-  adminEmails: ['dj.y.nakata@gmail.com'],
+  adminEmails: ['example@example.com'],
   mailFromName: '実験担当（自動送信）',
 
   // メール送信上限ケア
