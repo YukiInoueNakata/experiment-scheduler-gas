@@ -208,11 +208,37 @@ function getSlots() {
   var out = values.map(function(row){
     var rec = asObj_(head,row);
     var ds = normDateStr_(rec.Date), st=normTimeStr_(rec.Start), en=normTimeStr_(rec.End);
-    var confirmed = (bySlot[rec.SlotID]||[]).filter(function(r){ return r.Status==='confirmed'; }).length;
+    var slotResponses = bySlot[rec.SlotID]||[];
+    var confirmed = slotResponses.filter(function(r){ return r.Status==='confirmed'; }).length;
+    var pending = slotResponses.filter(function(r){ return r.Status==='pending'; }).length;
+    var waitlist = slotResponses.filter(function(r){ return r.Status==='waitlist'; }).length;
+    
     var label = (function(){ 
       var w='日月火水木金土'[ new Date(ds+'T00:00:00+09:00').getDay() ]; 
       return ds+' ('+w+')'; 
     })();
+    
+    // あと何名で確定かを計算
+    var neededForConfirm = 0;
+    var confirmMessage = '';
+    
+    if (confirmed >= CONFIG.minCapacityToConfirm) {
+      // すでに最小人数を満たしている
+      confirmMessage = '確定済み';
+    } else if (pending + confirmed >= CONFIG.minCapacityToConfirm) {
+      // pendingを含めれば最小人数を満たす
+      neededForConfirm = 0;
+      confirmMessage = '処理待ち';
+    } else {
+      // まだ最小人数に達していない
+      neededForConfirm = CONFIG.minCapacityToConfirm - pending - confirmed;
+      confirmMessage = 'あと' + neededForConfirm + '名で確定';
+    }
+    
+    // 満席かどうかの情報も追加
+    var isFull = confirmed >= Number(rec.Capacity);
+    var availableSeats = Math.max(0, Number(rec.Capacity) - confirmed);
+    
     return { 
       slotId:rec.SlotID, 
       date:ds, 
@@ -221,7 +247,14 @@ function getSlots() {
       end:en, 
       capacity:Number(rec.Capacity),
       status:rec.Status, 
-      remaining:Math.max(0, Number(rec.Capacity)-confirmed), 
+      remaining:availableSeats,  // 空き席数
+      confirmed:confirmed,        // 確定人数
+      pending:pending,            // 申込み中の人数
+      waitlist:waitlist,          // キャンセル待ちの人数
+      neededForConfirm:neededForConfirm,  // あと何名で確定か
+      confirmMessage:confirmMessage,       // 状態メッセージ
+      isFull:isFull,              // 満席かどうか
+      minCapacity:CONFIG.minCapacityToConfirm,  // 最小確定人数
       tz:rec.Timezone 
     };
   }).filter(function(s){ 
@@ -230,7 +263,12 @@ function getSlots() {
     return (a.date+a.start).localeCompare(b.date+b.start); 
   });
 
-  return { title: CONFIG.title, slots: out, capacity: CONFIG.capacity };
+  return { 
+    title: CONFIG.title, 
+    slots: out, 
+    capacity: CONFIG.capacity,
+    minCapacityToConfirm: CONFIG.minCapacityToConfirm  // フロントエンドでも使えるように追加
+  };
 }
 
 /** ========= 申込処理 ========= */
