@@ -322,9 +322,9 @@ function processMailQueue_(){
         let logSheet = getSS_().getSheetByName('TestMailLog');
         if (!logSheet) {
           logSheet = getSS_().insertSheet('TestMailLog');
-          logSheet.appendRow(['Timestamp', 'Type', 'To', 'Subject', 'Status']);
+          logSheet.appendRow(['Timestamp', 'Type', 'To', 'Subject', 'Body', 'Status']);
         }
-        logSheet.appendRow([new Date(), type, to, sub, 'queue-processed']);
+        logSheet.appendRow([new Date(), type, to, sub, body, 'queue-processed']);
         
       } else {
         // 実際のメール送信
