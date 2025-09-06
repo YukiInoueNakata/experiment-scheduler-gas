@@ -11,7 +11,7 @@ function processPendingBatch_() {
   lock.waitLock(30000);
   
   try {
-    // 0. 過去日付のデータを除外（新規追加）
+    // 0. 過去日付のデータを除外（今日以前をすべて除外）
     archivePastDatePending_();
     
     // 1. 過剰登録のクリーンアップ
@@ -36,9 +36,11 @@ function processPendingBatch_() {
 
 /** ========= 過去日付のpending/waitlistをArchive ========= */
 function archivePastDatePending_() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = normDateStr_(today);
+  // 明日の日付を取得（明日より前 = 今日以前をアーカイブ）
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const tomorrowStr = normDateStr_(tomorrow);
   
   const respSh = getSS_().getSheetByName(SHEETS.RESP);
   const responses = respSh.getDataRange().getValues();
@@ -53,18 +55,21 @@ function archivePastDatePending_() {
     const row = responses[i];
     const obj = asObj_(head, row);
     
-    // 今日より前の日付のpending/waitlistをArchive
+    // 日付を確実に正規化して比較
+    const objDateStr = normDateStr_(obj.Date);
+    
+    // 明日より前（今日以前）の日付のpending/waitlistをArchive
     // confirmedは除外（過去の確定データは別処理で管理）
-    if (obj.Date < todayStr && (obj.Status === 'pending' || obj.Status === 'waitlist')) {
+    if (objDateStr < tomorrowStr && (obj.Status === 'pending' || obj.Status === 'waitlist')) {
       moveToArchive_(obj, 'past-date-pending');
       respSh.deleteRow(i + 1);
       archivedCount++;
-      console.log(`過去日付をArchive: ${obj.Name} - ${obj.Date} ${obj.SlotID}`);
+      console.log(`過去日付をArchive: ${obj.Name} - ${objDateStr} ${obj.SlotID}`);
     }
   }
   
   if (archivedCount > 0) {
-    console.log(`過去日付のpending/waitlist ${archivedCount}件をArchiveに移動`);
+    console.log(`今日以前のpending/waitlist ${archivedCount}件をArchiveに移動`);
   }
 }
 
@@ -127,7 +132,18 @@ function fillRemainingSlots_() {
 }
 
 function processAllPendingSlots_() {
-  const pendingResponses = getResponses_().filter(r => r.Status === 'pending');
+  // 明日以降のスロットのみ処理対象とする
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const tomorrowStr = normDateStr_(tomorrow);
+  
+  const pendingResponses = getResponses_()
+    .filter(r => {
+      const dateStr = normDateStr_(r.Date);
+      return r.Status === 'pending' && dateStr >= tomorrowStr;
+    });
+    
   const bySlot = groupBy_(pendingResponses, r => r.SlotID);
   
   Object.keys(bySlot).forEach(slotId => {
@@ -144,6 +160,18 @@ function confirmIfCapacityReached_(slotId) {
   const slots = readSheetAsObjects_(slotSh);
   const slot = slots.find(s => s.SlotID === slotId);
   if (!slot) return { slotId, status: 'notfound' };
+  
+  // スロットの日付が明日以降かチェック
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const tomorrowStr = normDateStr_(tomorrow);
+  const slotDateStr = normDateStr_(slot.Date);
+  
+  if (slotDateStr < tomorrowStr) {
+    console.log(`スロット ${slotId} は過去日付のためスキップ: ${slotDateStr}`);
+    return { slotId, status: 'past-date', filled: false, confirmedCount: 0 };
+  }
 
   const cap = parseInt(slot.Capacity, 10);
   const minCap = CONFIG.minCapacityToConfirm;
