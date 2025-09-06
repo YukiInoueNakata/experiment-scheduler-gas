@@ -2,7 +2,7 @@
 /** ★ スプレッドシートID（必須）
  *  URL: https://docs.google.com/spreadsheets/d/【このID】/edit...
  */
-const SS_ID = '';
+const SS_ID = '11mPz0I-Axge7UUtpiaMeDIou_l6PKFtdINwqhwMhHg8';
 
 const CONFIG = {
   title: '実験参加スケジュール',
