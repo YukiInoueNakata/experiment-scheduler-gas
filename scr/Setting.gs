@@ -2,7 +2,7 @@
 /** ★ スプレッドシートID（必須）
  *  URL: https://docs.google.com/spreadsheets/d/【このID】/edit...
  */
-const SS_ID = '11mPz0I-Axge7UUtpiaMeDIou_l6PKFtdINwqhwMhHg8';
+const SS_ID = '';
 
 const CONFIG = {
   title: '実験参加スケジュール',
@@ -24,9 +24,9 @@ const CONFIG = {
   // 除外日設定
   excludeWeekends: true,
   excludeDates: ['2025-09-16','2025-09-23'],
-  excludeDateTimes: [], //記入例 '2025-09-10 11:00-12:00'
-    
- 
+  excludeDateTimes: [
+    // '2025-09-10 11:00-12:00'
+  ],
 
   // 表示設定
   showOnlyFromTomorrow: true,
@@ -38,7 +38,7 @@ const CONFIG = {
   totalConfirmCap: 60,
 
   // バッチ処理設定
-  batchProcessDelaySeconds: 30,   // 申込み後、何秒後に確定処理を実行
+  batchProcessDelaySeconds: 30,   // 申込み後、何秒後に確定処理を実行（テスト時は5秒程度に変更可）
 
   // 表示/通知
   location: '立命館大学 OIC ○号館 ○F 実験室A',
